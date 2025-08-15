@@ -11,8 +11,8 @@
     #app{height:100%;display:flex;flex-direction:column}
     header{display:flex;gap:8px;align-items:center;padding:8px;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,0.06);flex-wrap:wrap}
     header h1{margin:0;font-size:16px}
-    .controls{display:flex;gap:8px;align-items:center;flex:1}
-    .controls input{padding:8px;border:1px solid #ddd;border-radius:8px;width:220px}
+    .controls{display:flex;gap:8px;align-items:center;flex:1;flex-wrap:wrap} /* ★ スマホで折り返し */
+    .controls input{padding:8px;border:1px solid #ddd;border-radius:8px;width:220px;flex:1 1 180px} /* ★ 幅レスポンシブ */
     .controls button{padding:8px 10px;border-radius:8px;border:1px solid #ddd;background:#fff;cursor:pointer}
     .controls .mode-btn{padding:7px 10px;border-radius:8px}
     .controls .mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
@@ -32,7 +32,13 @@
     .rotateable{transition:transform 120ms ease}
     .marker-heading{width:22px;height:22px;border-radius:50%;background:#1e90ff;border:2px solid #fff;box-shadow:0 0 0 2px rgba(30,144,255,0.25)}
     .marker-heading::after{content:"";position:absolute;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid #1e90ff;top:-8px;left:5px;transform-origin:center}
-    @media(max-width:800px){aside.sidebar{position:static;width:100%;max-height:240px;border-radius:0}.hud{top:auto;bottom:72px}}
+    @media(max-width:800px){
+      aside.sidebar{position:static;width:100%;max-height:260px;border-radius:0} /* ★ 少し高く */
+      .hud{top:auto;bottom:72px}
+      header{gap:6px}
+      .controls button{padding:8px 8px;font-size:13px} /* ★ スマホで詰める */
+      .compass{bottom:76px} /* ★ HUDに被らないよう微調整 */
+    }
   </style>
 </head>
 <body>
@@ -217,14 +223,26 @@
       function speakJa(text){ if(!window.speechSynthesis) return; try{ const u = new SpeechSynthesisUtterance(text); u.lang='ja-JP'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);}catch(e){console.warn('speak fail',e);} }
 
       // ====== 追尾/回転 ======
-      function applyFollowAndRotate(lat,lon,bearing){ if(app.state.follow){ const z = Math.max(15, map.getZoom()); map.setView([lat,lon], Math.min(17,z)); } if(app.state.rotate){ const deg = (bearing||0); try{ els.compass.style.transform = `rotate(${deg}deg)`; }catch(e){} try{ document.getElementById('map').style.transform = `rotate(${-deg}deg)`; document.getElementById('map').style.transformOrigin='50% 50%'; }catch(e){} } else { try{ document.getElementById('map').style.transform='none'; }catch(e){} } }
+      function applyFollowAndRotate(lat,lon,bearing){
+        if(app.state.follow){
+          const z = Math.max(15, map.getZoom());
+          map.setView([lat,lon], Math.min(17,z));
+        }
+        // ★ 地図本体は回転させない（Leafletのタイル歪み・タッチ操作不具合を防止）
+        if(app.state.rotate){
+          const deg = (bearing||0);
+          try{ els.compass.style.transform = `rotate(${deg}deg)`; }catch(e){}
+        } else {
+          try{ els.compass.style.transform = 'none'; }catch(e){}
+        }
+      }
 
       // ====== ナビ実行・自動リルート ======
       function startNavigation(){ if(app.state.nav) return; if(!app.state.routes||app.state.routes.length===0){ setStatus('先にルートを検索してください',true); return;} app.state.nav=true; setStatus('ナビ開始：ルートを追跡します'); els.startNav.disabled=true; els.stopNav.disabled=false;
         if(!navigator.geolocation){ setStatus('位置情報非対応。ダミーを使用します',true); applyDummy(); return; }
         try{ app.state.watchId = navigator.geolocation.watchPosition(onNavPosition, onNavError, { enableHighAccuracy:true, maximumAge:1000, timeout:15000}); }catch(e){ console.warn('watch fail',e); applyDummy(); }
       }
-      function stopNavigation(){ if(!app.state.nav) return; app.state.nav=false; setStatus('ナビ停止'); els.startNav.disabled=false; els.stopNav.disabled=true; try{ if(app.state.watchId!==null){ navigator.geolocation.clearWatch(app.state.watchId); app.state.watchId=null; }}catch(e){} try{ document.getElementById('map').style.transform='none'; }catch(e){} }
+      function stopNavigation(){ if(!app.state.nav) return; app.state.nav=false; setStatus('ナビ停止'); els.startNav.disabled=false; els.stopNav.disabled=true; try{ if(app.state.watchId!==null){ navigator.geolocation.clearWatch(app.state.watchId); app.state.watchId=null; }}catch(e){} try{ /* ★ map回転を使わないため何もしない */ }catch(e){} }
 
       function onNavError(err){ console.warn('nav pos err',err); if(err && err.code===1){ setStatus('位置情報が許可されていません', true); } }
 
@@ -233,11 +251,29 @@
 
       function updateProgressLayer(route, snapIdx){ if(!route) return; const coords = route.geometry.coordinates; if(snapIdx<=0) return; const seg = coords.slice(0, Math.min(snapIdx+1, coords.length)).map(c=>[c[1],c[0]]); if(!app.state.progressLayer){ app.state.progressLayer = L.polyline(seg,{color:'#2ecc71', weight:8, opacity:0.9}).addTo(map); } else { app.state.progressLayer.setLatLngs(seg); } }
 
+      // ★ 角度補正・正規化ヘルパ
+      function norm360(deg){ if(typeof deg!=='number'||Number.isNaN(deg)) return 0; return (deg%360+360)%360; }
+
       function onNavPosition(pos){
         const lat=pos.coords.latitude, lon=pos.coords.longitude;
-        // 方位計算：デバイス方位がなければ移動ベクトルから算出
-        let bearing = app.state.heading || 0;
-        if(app._prev){ const dy = lat - app._prev.lat, dx = lon - app._prev.lon; if(Math.abs(dy)+Math.abs(dx) > 1e-6){ bearing = (Math.atan2(dx, dy) * 180/Math.PI); } }
+
+        // ★ デバイス方位が新しければそれを優先、なければ移動ベクトルから推定
+        let bearing = 0;
+        const nowTs = Date.now();
+        const headingFresh = (nowTs - app.state.lastHeadingTs) < 2500; // 2.5s 以内を有効とする
+        if(headingFresh){
+          bearing = norm360(app.state.heading);
+        }else{
+          if(app._prev){
+            const dy = lat - app._prev.lat;
+            const dx = lon - app._prev.lon;
+            if(Math.abs(dy)+Math.abs(dx) > 1e-6){
+              // 北=0°, 東=90° となるように dx,dy をコンパス角に変換
+              bearing = norm360(Math.atan2(dx, dy) * 180/Math.PI);
+            }
+          }
+        }
+
         setCurrentMarker(lat,lon,bearing);
         applyFollowAndRotate(lat,lon,bearing);
         app._prev = {lat,lon};
@@ -280,11 +316,47 @@
 
       // ====== デバイス方位（コンパス） ======
       function initOrientation(){
-        function handle(ang){ if(typeof ang==='number' && !Number.isNaN(ang)){ app.state.heading = ang; app.state.lastHeadingTs = Date.now(); } }
+        // ★ 画面回転角（0/90/180/270）を考慮して北=0を維持
+        function screenAngle(){
+          const a = (screen.orientation && typeof screen.orientation.angle==='number') ? screen.orientation.angle :
+                    (typeof window.orientation==='number' ? window.orientation : 0);
+          return (a||0);
+        }
+        function handleFromAlpha(alpha){
+          // 標準 alpha: 北=0, 時計回り増加。画面回転を補正してコンパス北=0に正規化
+          const head = norm360(360 - alpha + screenAngle()); // iOS Safari 以外の一般解
+          app.state.heading = head;
+          app.state.lastHeadingTs = Date.now();
+        }
+        function handleGeneric(e){
+          // iOS Safari: webkitCompassHeading があればそれを採用（北=0, 時計回り）
+          const wh = (typeof e.webkitCompassHeading === 'number' ? e.webkitCompassHeading : null);
+          if(wh!=null && !Number.isNaN(wh)){
+            app.state.heading = norm360(wh + 0); // 既に補正済み
+            app.state.lastHeadingTs = Date.now();
+          }else if(typeof e.alpha === 'number' && !Number.isNaN(e.alpha)){
+            handleFromAlpha(e.alpha);
+          }
+        }
+
+        // iOS（許可ダイアログが必要）
         if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission === 'function'){
-          // iOS系：ユーザー操作が必要
-          document.body.addEventListener('click', function once(){ DeviceOrientationEvent.requestPermission().then(state=>{ if(state==='granted'){ window.addEventListener('deviceorientation', (e)=> handle(e.alpha)); } }); document.body.removeEventListener('click', once); }, {once:true});
-        } else if(window.DeviceOrientationEvent){ window.addEventListener('deviceorientationabsolute', (e)=> handle(e.alpha)); window.addEventListener('deviceorientation', (e)=> handle(e.alpha)); }
+          document.body.addEventListener('click', function once(){
+            DeviceOrientationEvent.requestPermission().then(state=>{
+              if(state==='granted'){
+                window.addEventListener('deviceorientation', handleGeneric, {passive:true});
+                window.addEventListener('deviceorientationabsolute', handleGeneric, {passive:true});
+              }
+            }).catch(()=>{ /* 無視 */ });
+            document.body.removeEventListener('click', once);
+          }, {once:true});
+        } else if(window.DeviceOrientationEvent){
+          window.addEventListener('deviceorientationabsolute', handleGeneric, {passive:true});
+          window.addEventListener('deviceorientation', handleGeneric, {passive:true});
+        }
+
+        // ★ 画面の向きが変わったらタイムスタンプ更新（次回位置更新で即反映）
+        window.addEventListener('orientationchange', ()=>{ app.state.lastHeadingTs = 0; }, {passive:true});
       }
       initOrientation();
 
@@ -323,7 +395,7 @@
       els.startNav.addEventListener('click', ()=> startNavigation());
       els.stopNav.addEventListener('click', ()=> stopNavigation());
       els.chkFollow.addEventListener('change', ()=>{ app.state.follow = els.chkFollow.checked; });
-      els.chkRotate.addEventListener('change', ()=>{ app.state.rotate = els.chkRotate.checked; if(!app.state.rotate){ try{ document.getElementById('map').style.transform='none'; }catch(e){} } });
+      els.chkRotate.addEventListener('change', ()=>{ app.state.rotate = els.chkRotate.checked; if(!app.state.rotate){ try{ els.compass.style.transform='none'; }catch(e){} } }); /* ★ map回転を使わない */
 
       [els.from, els.to].forEach(i=> i.addEventListener('keydown', e=>{ if(e.key==='Enter') els.search.click(); }));
 
