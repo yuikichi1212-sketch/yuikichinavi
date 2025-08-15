@@ -242,31 +242,6 @@
         applyFollowAndRotate(lat,lon,bearing);
         app._prev = {lat,lon};
         if(app.state.useDummy) return;
-        // 方位計算（安定版）：デバイス方位がなければ球面座標から算出
-let bearing = app.state.heading || 0;
-if (app._prev) {
-  const R = Math.PI / 180;
-  const lat1 = app._prev.lat * R;
-  const lat2 = lat * R;
-  const dLon = (lon - app._prev.lon) * R;
-  const y = Math.sin(dLon) * Math.cos(lat2);
-  const x = Math.cos(lat1) * Math.sin(lat2) -
-            Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
-  let brng = Math.atan2(y, x) * 180 / Math.PI;
-  if (!Number.isNaN(brng)) {
-    brng = (brng + 360) % 360; // 0〜360°に正規化
-    // 極端に近い点では方向が不安定になるため閾値チェック
-    const distMoved = turf.distance(
-      turf.point([app._prev.lon, app._prev.lat]),
-      turf.point([lon, lat]),
-      { units: 'meters' }
-    );
-    if (distMoved > 1) { // 1m以上移動時のみ更新
-      bearing = brng;
-    }
-  }
-}
-
 
         const route = app.state.routes[app.state.selected]; if(!route) return;
         const line = turf.lineString(route.geometry.coordinates);
