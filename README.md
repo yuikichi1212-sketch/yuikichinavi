@@ -68,7 +68,7 @@ aside.sidebar{position:absolute;right:12px;top:72px;z-index:1400;background:#fff
 <div class="row"><span class="key">残り距離</span><span class="val" id="hud-rem-dist">—</span><span class="key">到着まで</span><span class="val" id="hud-rem-time">—</span></div>
 <div class="row small" id="hud-next">次の案内 — —</div>
 <label class="small"><input type="checkbox" id="chk-follow" checked> 追尾</label>
-<label class="small" style="margin-left:8px"><input type="checkbox" id="chk-rotate" checked> コンパス回転</label>
+<label class="small" style="margin-left:5px"><input type="checkbox" id="chk-rotate" checked> コンパス回転</label>
 </div>
 
 <aside class="sidebar" aria-live="polite">
