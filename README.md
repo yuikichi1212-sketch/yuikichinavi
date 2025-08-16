@@ -8,7 +8,7 @@
 <style>
 :root{--accent:#1e90ff;--bg:#f7f9fc;--ink:#111;--header-h:64px;--vh:1vh}
 html,body{height:100%;margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,'Noto Sans JP',sans-serif;background:var(--bg);color:var(--ink);}
-body{height:100%}
+body{height:100%;}
 #app{height:100%;position:relative;overflow:hidden}
 header{position:absolute;top:env(safe-area-inset-top);left:env(safe-area-inset-left);right:env(safe-area-inset-right);z-index:2000;display:flex;gap:8px;align-items:center;padding:8px;background:#fff;border-radius:12px;box-shadow:0 6px 22px rgba(0,0,0,0.12);flex-wrap:wrap;max-width:calc(100% - 24px)}
 header h1{margin:0;font-size:16px;white-space:nowrap}
@@ -25,7 +25,7 @@ aside.sidebar{position:absolute;right:12px;top:calc(var(--header-h) + 16px + env
 .turn-step{padding:6px;border-bottom:1px dashed #eee}
 #status{position:absolute;left:12px;bottom:calc(90px + env(safe-area-inset-bottom));z-index:1500;background:rgba(255,255,255,0.95);padding:8px 10px;border-radius:8px;box-shadow:0 6px 18px rgba(0,0,0,0.12)}
 .small{font-size:12px;color:#666}
-.hud{position:absolute;left:12px;top:calc(var(--header-h) + 12px + env(safe-area-inset-top));z-index:1500;background:rgba(255,255,255,0.96);padding:8px 10px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.12);min-width:220px;transform-origin:top left;transform:scale(0.66)}
+.hud{position:absolute;left:12px;top:calc(var(--header-h) + 12px + env(safe-area-inset-top));z-index:1500;background:rgba(255,255,255,0.96);padding:8px 10px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.12);min-width:220px;}
 .hud .row{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .hud .key{font-size:12px;color:#777}
 .hud .val{font-weight:700}
@@ -89,35 +89,23 @@ body.fullscreen .fullscreen-btn{top:calc(12px + env(safe-area-inset-top))}
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
 <script>
-// 可変100vh（iOS/Safari対策）
 function setVhVar(){ const vh=window.innerHeight*0.01; document.documentElement.style.setProperty('--vh', vh+'px'); }
 setVhVar(); window.addEventListener('resize', setVhVar); window.addEventListener('orientationchange', setVhVar);
 
-// 初期化済みチェック
 if(window._ykNavV7){console.warn('初期化済み');}else{window._ykNavV7=true;(function(){
 const app={state:{map:null,markers:{},routes:[],routeLayers:[],progressLayer:null,selected:-1,nav:false,watchId:null,heading:0,lastHeadingTs:0,setMode:'driving',mapClickMode:null,useDummy:false,lastSnapIdx:0,stepLayer:null,follow:true,rotate:true}};
 const els={from:document.getElementById('from'),to:document.getElementById('to'),swap:document.getElementById('swap'),modes:document.getElementById('modes'),search:document.getElementById('search'),setFromMap:document.getElementById('set-from-map'),setToMap:document.getElementById('set-to-map'),routeList:document.getElementById('route-list'),turns:document.getElementById('turns'),status:document.getElementById('status'),startNav:document.getElementById('start-nav'),stopNav:document.getElementById('stop-nav'),hudTotalDist:document.getElementById('hud-total-dist'),hudTotalTime:document.getElementById('hud-total-time'),hudRemDist:document.getElementById('hud-rem-dist'),hudRemTime:document.getElementById('hud-rem-time'),hudNext:document.getElementById('hud-next'),chkFollow:document.getElementById('chk-follow'),chkRotate:document.getElementById('chk-rotate'),compass:document.getElementById('compass-needle'),useCur:document.getElementById('use-cur'),btnFs:document.getElementById('btn-fs')};
 
 // 地図初期化
-app.state.map=L.map('map',{zoomControl:false}).setView([35.681236,139.767125],16);
+app.state.map=L.map('map',{zoomControl:true}).setView([35.681236,139.767125],16);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(app.state.map);
 
-// フルスクリーンボタン
-els.btnFs.addEventListener('click',()=>{document.body.classList.toggle('fullscreen'); app.state.map.invalidateSize();});
-
-// 追尾・回転制御
+els.btnFs.addEventListener('click',()=>{document.body.classList.toggle('fullscreen'); setTimeout(()=>app.state.map.invalidateSize(),200);});
 els.chkFollow.addEventListener('change',e=>{app.state.follow=e.target.checked});
 els.chkRotate.addEventListener('change',e=>{app.state.rotate=e.target.checked});
 
-// コンパス更新
-function updateCompass(){els.compass.style.transform=`rotate(${app.state.heading}deg)`;}
-
-// 地図クリックで出発/目的地設定
-app.state.map.on('click',e=>{
- if(app.state.mapClickMode==='from'){els.from.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`; app.state.mapClickMode=null;}
- else if(app.state.mapClickMode==='to'){els.to.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`; app.state.mapClickMode=null;}
-});
-
+// 地図クリック設定
+app.state.map.on('click',e=>{ if(app.state.mapClickMode==='from'){els.from.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`; app.state.mapClickMode=null;} else if(app.state.mapClickMode==='to'){els.to.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`; app.state.mapClickMode=null;}});
 els.setFromMap.addEventListener('click',()=>{app.state.mapClickMode='from'});
 els.setToMap.addEventListener('click',()=>{app.state.mapClickMode='to'});
 
@@ -128,30 +116,12 @@ els.modes.querySelectorAll('.mode-btn').forEach(btn=>btn.addEventListener('click
  app.state.setMode=btn.dataset.mode;
 }));
 
-// ダミー関数: ルート検索・ナビ開始
-els.search.addEventListener('click',()=>{
- els.routeList.innerHTML='ルート候補1<br>ルート候補2';
-});
-els.startNav.addEventListener('click',()=>{
- app.state.nav=true; els.stopNav.disabled=false; els.startNav.disabled=true;
- els.status.textContent='状態: ナビ中';
-});
-els.stopNav.addEventListener('click',()=>{
- app.state.nav=false; els.stopNav.disabled=true; els.startNav.disabled=false;
- els.status.textContent='状態: 停止';
-});
-
-// マーカー表示関数
+// ルート途中マーカー
 function addStepMarker(latlng,label){
- const m=L.marker(latlng,{icon:L.divIcon({className:'step-label',html:`<span class='ico'>📍</span>${label}`})}).addTo(app.state.map);
- return m;
+ return L.marker(latlng,{icon:L.divIcon({className:'step-label',html:`<span class='ico'>📍</span>${label}`})}).addTo(app.state.map);
 }
 
-// 例: ルート途中マーカー
-addStepMarker([35.682,139.768],'次の交差点');
-addStepMarker([35.683,139.769],'左折');
-
-})();}
+})();
 </script>
 </div>
 </body>
