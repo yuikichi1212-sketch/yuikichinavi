@@ -18,7 +18,7 @@ header h1{margin:0;font-size:16px;white-space:nowrap}
 .controls .mode-btn{padding:7px 10px;border-radius:8px}
 .controls .mode-btn.active{background:var(--accent);color:#fff;border-color:var(--accent)}
 #map{position:absolute;top:calc(var(--header-h) + 8px + env(safe-area-inset-top));bottom:0;left:0;right:0;}
-body.fullscreen #map{top:0;}
+body.fullscreen #map{top:0;bottom:0;}
 aside.sidebar{position:absolute;right:12px;top:calc(var(--header-h) + 16px + env(safe-area-inset-top));z-index:1400;background:#fff;padding:12px;border-radius:12px;box-shadow:0 10px 30px rgba(0,0,0,0.14);width:360px;max-height:70vh;overflow:auto}
 .route-item{padding:8px;border-radius:8px;border:1px solid #eee;margin-bottom:6px;cursor:pointer}
 .route-item.selected{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
@@ -92,7 +92,7 @@ body.fullscreen .fullscreen-btn{top:calc(12px + env(safe-area-inset-top))}
 function setVhVar(){ const vh=window.innerHeight*0.01; document.documentElement.style.setProperty('--vh', vh+'px'); }
 setVhVar(); window.addEventListener('resize', setVhVar); window.addEventListener('orientationchange', setVhVar);
 
-if(window._ykNavV7){console.warn('初期化済み');}else{window._ykNavV7=true;(function(){
+if(window._ykNavV8){console.warn('初期化済み');}else{window._ykNavV8=true;(function(){
 const app={state:{map:null,markers:{},routes:[],routeLayers:[],progressLayer:null,selected:-1,nav:false,watchId:null,heading:0,lastHeadingTs:0,setMode:'driving',mapClickMode:null,useDummy:false,lastSnapIdx:0,stepLayer:null,follow:true,rotate:true}};
 const els={from:document.getElementById('from'),to:document.getElementById('to'),swap:document.getElementById('swap'),modes:document.getElementById('modes'),search:document.getElementById('search'),setFromMap:document.getElementById('set-from-map'),setToMap:document.getElementById('set-to-map'),routeList:document.getElementById('route-list'),turns:document.getElementById('turns'),status:document.getElementById('status'),startNav:document.getElementById('start-nav'),stopNav:document.getElementById('stop-nav'),hudTotalDist:document.getElementById('hud-total-dist'),hudTotalTime:document.getElementById('hud-total-time'),hudRemDist:document.getElementById('hud-rem-dist'),hudRemTime:document.getElementById('hud-rem-time'),hudNext:document.getElementById('hud-next'),chkFollow:document.getElementById('chk-follow'),chkRotate:document.getElementById('chk-rotate'),compass:document.getElementById('compass-needle'),useCur:document.getElementById('use-cur'),btnFs:document.getElementById('btn-fs')};
 
@@ -100,12 +100,23 @@ const els={from:document.getElementById('from'),to:document.getElementById('to')
 app.state.map=L.map('map',{zoomControl:true}).setView([35.681236,139.767125],16);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(app.state.map);
 
+// フルスク切替
 els.btnFs.addEventListener('click',()=>{document.body.classList.toggle('fullscreen'); setTimeout(()=>app.state.map.invalidateSize(),200);});
+
+// 追尾・コンパス
 els.chkFollow.addEventListener('change',e=>{app.state.follow=e.target.checked});
 els.chkRotate.addEventListener('change',e=>{app.state.rotate=e.target.checked});
 
 // 地図クリック設定
-app.state.map.on('click',e=>{ if(app.state.mapClickMode==='from'){els.from.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`; app.state.mapClickMode=null;} else if(app.state.mapClickMode==='to'){els.to.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`; app.state.mapClickMode=null;}});
+app.state.map.on('click',e=>{
+  if(app.state.mapClickMode==='from'){
+    els.from.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`;
+    app.state.mapClickMode=null;
+  } else if(app.state.mapClickMode==='to'){
+    els.to.value=`${e.latlng.lat.toFixed(6)},${e.latlng.lng.toFixed(6)}`;
+    app.state.mapClickMode=null;
+  }
+});
 els.setFromMap.addEventListener('click',()=>{app.state.mapClickMode='from'});
 els.setToMap.addEventListener('click',()=>{app.state.mapClickMode='to'});
 
@@ -118,7 +129,7 @@ els.modes.querySelectorAll('.mode-btn').forEach(btn=>btn.addEventListener('click
 
 // ルート途中マーカー
 function addStepMarker(latlng,label){
- return L.marker(latlng,{icon:L.divIcon({className:'step-label',html:`<span class='ico'>📍</span>${label}`})}).addTo(app.state.map);
+  return L.marker(latlng,{icon:L.divIcon({className:'step-label',html:`<span class='ico'>📍</span>${label}`})}).addTo(app.state.map);
 }
 
 })();
