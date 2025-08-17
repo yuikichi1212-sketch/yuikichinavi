@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>ゆいきちナビ</title>
+  <title>ゆいきちナビ — 超完全版</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     :root{--accent:#1e90ff;--bg:#f7f9fc;--ink:#111;--card:#fff}
@@ -11,7 +11,7 @@
     #app{height:100%;display:flex;flex-direction:column}
 
     /* ===== Top Toolbar（地図の外に固定） ===== */
-    header.toolbar{background:var(--card);box-shadow:0 1px 8px rgba(0,0,0,.06);padding:8px}
+    header.toolbar{background:var(--card);box-shadow:0 1px 8px rgba(0,0,0,.06);padding:8px;position:sticky;top:0;z-index:2000}
     .bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
     .brand{font-weight:800;margin-right:6px}
     .ipt{padding:8px;border:1px solid #e4e8ee;border-radius:10px;min-width:220px;flex:1 1 240px}
@@ -25,9 +25,8 @@
 
     /* ===== Map / Sidebar / HUD ===== */
     #main{position:relative;flex:1;min-height:420px}
-    #map{position:absolute;inset:0}
+    #map{position:absolute;inset:0;overflow:hidden}
 
-    /* 右の候補/詳細はトグル表示できる */
     .sidebar{position:absolute;right:12px;top:12px;z-index:1400;background:#fff;padding:10px;border-radius:14px;box-shadow:0 12px 30px rgba(0,0,0,0.12);width:360px;max-height:72vh;overflow:auto}
     .sidebar.hidden{display:none}
     .sidebar .title{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
@@ -35,8 +34,8 @@
     .route-item.selected{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
     .turn-step{padding:6px;border-bottom:1px dashed #eee}
 
-    /* HUDは小型化 */
-    .hud{position:absolute;left:12px;bottom:12px;z-index:1500;background:rgba(255,255,255,0.92);padding:6px 8px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.12)}
+    /* 小型HUD */
+    .hud{position:absolute;left:12px;bottom:12px;z-index:1500;background:rgba(255,255,255,0.92);padding:6px 8px;border-radius:10px;box-shadow:0 8px 20px rgba(0,0,0,.12);transform:translateZ(0)}
     .hud .row{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
     .hud .key{font-size:11px;color:#666}
     .hud .val{font-weight:700;font-size:12px}
@@ -50,8 +49,16 @@
     #route-steps{position:absolute;left:0;right:0;bottom:0;background:rgba(255,255,255,0.96);border-top:1px solid #eee;max-height:42%;overflow:auto;padding:10px;display:none;z-index:1401}
     #route-steps .drag{font-size:12px;color:#666;text-align:center;margin-bottom:4px}
 
+    /* 現在地マーカー（矢印） */
+    .marker-heading{width:22px;height:22px;border-radius:50%;background:#1e90ff;border:2px solid #fff;box-shadow:0 0 0 2px rgba(30,144,255,0.25)}
+    .marker-heading::after{content:"";position:absolute;width:0;height:0;border-left:6px solid transparent;border-right:6px solid transparent;border-bottom:10px solid #1e90ff;top:-8px;left:5px;transform-origin:center}
+    .rotateable{transition:transform 120ms ease;will-change:transform}
+
     /* Leaflet zoom buttons bigger on mobile */
     .leaflet-control-zoom{transform-origin:top left}
+
+    /* 回転用：Leafletのpaneにrotateを足すのでGPUへ */
+    .leaflet-map-pane{will-change:transform}
 
     @media(max-width:900px){
       .ipt{min-width:140px;flex:1 1 160px}
@@ -125,11 +132,11 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
   <script>
-  // ===== グローバル再初期化防止 =====
-  if (window._yuikichiUltraInit) {
+  // ===== 再初期化防止 =====
+  if (window._yuikichiUltraInitV2) {
     console.warn('already initialized');
   } else {
-    window._yuikichiUltraInit = true;
+    window._yuikichiUltraInitV2 = true;
 
     (function(){
       const S = {
@@ -139,6 +146,10 @@
         heading:0, lastHeadingTs:0, setMode:'driving',
         mapClickMode:null, follow:true, rotate:true, useDummy:false,
         lastRerouteTs:0, lastSnapIdx:0,
+        // ---- 音声案内抑制
+        lastSpokenIdx:-1, lastSpokenTs:0,
+        // ---- 視覚用なめらか方位
+        bearingTarget:0, visualBearing:0,
       };
 
       // ===== Elements
@@ -163,6 +174,10 @@
       function formatDuration(sec){ if(sec==null) return '—'; const s=Math.round(sec); const h=Math.floor(s/3600); const m=Math.round((s%3600)/60); return h>0? `${h}時間${m}分` : `${m}分`}
       const SPEED_KMH = {foot:4.8, bike:16, driving:42}
       function etaSeconds(meters, mode){ const v=SPEED_KMH[mode]||42; return (meters/1000)/v*3600 }
+      function norm360(d){ if(typeof d!=='number'||Number.isNaN(d)) return 0; return (d%360+360)%360 }
+      function shortestDelta(a,b){ // deg, a->b
+        let d = (b - a + 540) % 360 - 180; return d;
+      }
 
       function jpInstruction(step){
         if(!step||!step.maneuver) return '直進';
@@ -179,12 +194,47 @@
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'© OpenStreetMap contributors'}).addTo(map);
       S.map = map;
 
+      // === 地図回転：Leafletの translate を壊さないよう、pane の transform に rotate を合成
+      const mapPane = map.getPanes().mapPane;
+      const controlContainer = map.getContainer().querySelector('.leaflet-control-container');
+      function applyMapRotation(deg){
+        // 合成: 既存transform(translate/scale) + rotate()
+        const t = mapPane.style.transform || '';
+        const tNoRot = t.replace(/rotate\([^)]*\)/g,'').trim();
+        mapPane.style.transform = (tNoRot + ` rotate(${-deg}deg)`).trim();
+        if (controlContainer){
+          controlContainer.style.transform = `rotate(${deg}deg)`; // UIは正立
+          controlContainer.style.transformOrigin = 'bottom right';
+        }
+      }
+
+      // RAFループで方位をなめらか追従
+      function rafLoop(){
+        const target = S.rotate ? norm360(S.bearingTarget) : 0;
+        const delta = shortestDelta(S.visualBearing, target);
+        S.visualBearing = norm360(S.visualBearing + delta * 0.12); // 慣性風
+        applyMapRotation(S.visualBearing);
+        // コンパス（北を指す＝地図回転角と同じ向き）
+        try{ E.compass.style.transform = `rotate(${S.visualBearing}deg)` }catch{}
+        // 現在地アイコンは「進行方向」= 実方位で回す（地図は -方位で回るので、画面上は常に上向き）
+        updateCurrentMarkerRotation(S.visualBearing);
+        requestAnimationFrame(rafLoop);
+      }
+      requestAnimationFrame(rafLoop);
+
       // Current marker (heading capable)
+      function ensureCur(){ if(!S.cur){ const html = `<div class="marker-heading rotateable" style="position:relative;"></div>`; S.cur = L.marker(map.getCenter(),{icon:L.divIcon({html, className:'', iconSize:[22,22]})}).addTo(map) } return S.cur }
       function setCurrentMarker(lat,lon,bearing){
-        const html = `<div class="marker-heading rotateable" style="position:relative;width:22px;height:22px;border-radius:50%;background:#1e90ff;border:2px solid #fff;box-shadow:0 0 0 2px rgba(30,144,255,.25)"></div>`;
-        if(!S.cur){ S.cur = L.marker([lat,lon],{icon:L.divIcon({html, className:'', iconSize:[22,22]})}).addTo(map) }
-        S.cur.setLatLng([lat,lon]);
-        try{ const el=S.cur.getElement().querySelector('.rotateable'); if(el){ el.style.transform=`rotate(${bearing||0}deg)` } }catch{}
+        const m = ensureCur(); m.setLatLng([lat,lon]);
+        S.currentBearing = bearing||0; // 実方位を保持（度）
+        updateCurrentMarkerRotation(S.visualBearing);
+      }
+      function updateCurrentMarkerRotation(visualMapBearing){
+        // 画面上の矢印向きを「実方位 − 地図回転」で補正
+        const el = S.cur && S.cur.getElement() ? S.cur.getElement().querySelector('.rotateable') : null;
+        if(!el) return;
+        const relative = norm360((S.currentBearing||0) - visualMapBearing);
+        el.style.transform = `rotate(${relative}deg)`;
       }
 
       // Parse & Geocode
@@ -202,7 +252,7 @@
         const steps=(r.legs&&r.legs[0]&&r.legs[0].steps)? r.legs[0].steps:[]; const every=Math.max(1,Math.floor(steps.length/40)); steps.forEach((s,idx)=>{ if(!s.maneuver||s.maneuver.type==='depart') return; if(idx%every!==0 && s.maneuver.type!=='turn' && s.maneuver.type!=='arrive') return; const m=makeTurnMarker(s); if(m){ m.addTo(map); S.turnMarkers.push(m) } });
         const div=document.createElement('div'); div.className='route-item'; if(i===0) div.classList.add('selected'); div.textContent=`候補 ${i+1} — ${(r.distance/1000).toFixed(2)} km / ${formatDuration(etaSeconds(r.distance,S.setMode))}`; div.addEventListener('click',()=> selectRoute(i)); E.routeList.appendChild(div); }); S.selected=0; selectRoute(0) }
 
-      function selectRoute(i){ if(i<0||i>=S.routes.length) return; S.selected=i; S.routeLayers.forEach((l,idx)=>{ l.setStyle({color: idx===i? '#1e90ff':'#888', weight: idx===i?8:5, opacity: idx===i?0.98:0.4}); if(idx===i) l.bringToFront() }); E.routeList.querySelectorAll('.route-item').forEach((n,idx)=> n.classList.toggle('selected', idx===i)); const r=S.routes[i]; const steps=r.legs[0].steps; renderTurns(steps); const coords=r.geometry.coordinates.map(c=>[c[1],c[0]]); map.fitBounds(L.latLngBounds(coords),{padding:[50,50]}); E.hudTotalDist.textContent=(r.distance/1000).toFixed(2)+' km'; E.hudTotalTime.textContent=formatDuration(etaSeconds(r.distance,S.setMode)); S.lastSnapIdx=0; if(S.progressLayer){ try{map.removeLayer(S.progressLayer)}catch{} S.progressLayer=null } }
+      function selectRoute(i){ if(i<0||i>=S.routes.length) return; S.selected=i; S.routeLayers.forEach((l,idx)=>{ l.setStyle({color: idx===i? '#1e90ff':'#888', weight: idx===i?8:5, opacity: idx===i?0.98:0.4}); if(idx===i) l.bringToFront() }); E.routeList.querySelectorAll('.route-item').forEach((n,idx)=> n.classList.toggle('selected', idx===i)); const r=S.routes[i]; const steps=r.legs[0].steps; renderTurns(steps); const coords=r.geometry.coordinates.map(c=>[c[1],c[0]]); map.fitBounds(L.latLngBounds(coords),{padding:[50,50]}); E.hudTotalDist.textContent=(r.distance/1000).toFixed(2)+' km'; E.hudTotalTime.textContent=formatDuration(etaSeconds(r.distance,S.setMode)); S.lastSnapIdx=0; S.lastSpokenIdx=-1; if(S.progressLayer){ try{map.removeLayer(S.progressLayer)}catch{} S.progressLayer=null } }
 
       function renderTurns(steps){ E.turns.innerHTML=''; if(!steps||!steps.length){ E.turns.textContent='ターンバイターンデータがありません'; return } const fr=document.createDocumentFragment(); steps.forEach((s)=>{ const node=document.createElement('div'); node.className='turn-step'; node.innerHTML=`<div><strong>${jpInstruction(s)}</strong></div><div class='muted'>距離: ${formatDist(s.distance)} ${s.name?'｜道路: '+s.name:''}</div>`; node.addEventListener('mouseenter',()=>{ if(!s.maneuver||!s.maneuver.location) return; const [lon,lat]=s.maneuver.location; L.popup({autoClose:true,closeButton:false,offset:[0,-10]}).setLatLng([lat,lon]).setContent(`<b>${jpInstruction(s)}</b><div class='muted'>${formatDist(s.distance)} ${s.name? '｜'+s.name:''}</div>`).openOn(map) }); fr.appendChild(node) }); E.turns.appendChild(fr); // bottom sheet
         const listHtml = steps.map((s,idx)=>`<li data-idx="${idx}">${jpInstruction(s)} <span class='muted'>${formatDist(s.distance||0)}</span></li>`).join(''); E.stepsBody.innerHTML = `<ol>${listHtml}</ol>`; E.stepsSheet.style.display='block'; E.stepsBody.querySelectorAll('li').forEach(li=> li.addEventListener('click',()=>{ const s=steps[+li.dataset.idx]; if(s&&s.maneuver){ const [lon,lat]=s.maneuver.location; map.panTo([lat,lon]); L.popup().setLatLng([lat,lon]).setContent(`<b>${jpInstruction(s)}</b>`).openOn(map) } })) }
@@ -214,20 +264,103 @@
       function offRouteThreshold(){ return S.setMode==='foot'?30: S.setMode==='bike'?50:100 }
       function rerouteCooldownMs(){ return 8000 }
       function updateProgressLayer(route, snapIdx){ if(!route) return; const coords=route.geometry.coordinates; if(snapIdx<=0) return; const seg=coords.slice(0,Math.min(snapIdx+1,coords.length)).map(c=>[c[1],c[0]]); if(!S.progressLayer){ S.progressLayer=L.polyline(seg,{color:'#2ecc71',weight:8,opacity:.9}).addTo(map) } else { S.progressLayer.setLatLngs(seg) } }
-      function norm360(d){ if(typeof d!=='number'||Number.isNaN(d)) return 0; return (d%360+360)%360 }
-      function onNavPos(pos){ const lat=pos.coords.latitude, lon=pos.coords.longitude; let bearing=0; const now=Date.now(); const fresh=(now - S.lastHeadingTs) < 2500; if(fresh){ bearing=norm360(S.heading) } else if(S._prev){ const dy=lat-S._prev.lat, dx=lon-S._prev.lon; if(Math.abs(dy)+Math.abs(dx) > 1e-6){ bearing=norm360(Math.atan2(dx,dy)*180/Math.PI) } } setCurrentMarker(lat,lon,bearing); if(S.follow){ const z=Math.max(15,map.getZoom()); map.setView([lat,lon], Math.min(17,z)) } if(S.rotate){ try{ E.compass.style.transform=`rotate(${bearing}deg)` }catch{} } else { try{ E.compass.style.transform='none' }catch{} } S._prev={lat,lon}; if(S.useDummy) return; const route=S.routes[S.selected]; if(!route) return; const line=turf.lineString(route.geometry.coordinates); const pt=turf.point([lon,lat]); const snapped=turf.nearestPointOnLine(line, pt, {units:'meters'}); const distTo=snapped.properties.dist; const snapIdx=snapped.properties.index||0; if(snapIdx>S.lastSnapIdx){ S.lastSnapIdx=snapIdx; updateProgressLayer(route,snapIdx) }
-        const steps=route.legs[0].steps||[]; let chosen=null; for(let i=0;i<steps.length;i++){ const st=steps[i]; const loc=st.maneuver&&st.maneuver.location; if(!loc) continue; const d=turf.distance(turf.point([lon,lat]), turf.point([loc[0],loc[1]]), {units:'meters'}); if(d>5){ chosen={index:i, step:st, dist:d}; break } } if(!chosen && steps.length){ chosen={index:steps.length-1, step:steps[steps.length-1], dist:0} }
-        if(chosen){ const msg=`${formatDist(chosen.dist)} 先、${jpInstruction(chosen.step)}`; E.hudNext.textContent=`次の案内 — ${msg}`; if(chosen.dist<60){ speakJa(msg) } }
-        const totalDist=route.distance; const totalDur=etaSeconds(route.distance,S.setMode); const remLine=turf.lineString(route.geometry.coordinates.slice(snapIdx)); const remKm=turf.length(remLine,{units:'kilometers'}); const remM=Math.max(0,Math.round(remKm*1000)); const remSec = totalDist>0 ? (totalDur*(remM/totalDist)) : 0; E.hudRemDist.textContent=formatDist(remM); E.hudRemTime.textContent=formatDuration(remSec);
-        const nowMs=Date.now(); if(distTo>offRouteThreshold() && (nowMs-S.lastRerouteTs)>rerouteCooldownMs()){ S.lastRerouteTs=nowMs; setStatus(`コース外（${Math.round(distTo)}m）。再検索…`); const cur={lat,lon}; const dest=S.to; if(dest){ fetchRoutes(cur,dest,S.setMode).then(rs=>{ if(rs&&rs.length){ drawRoutes(rs); setStatus('自動リルート完了'); if(S.follow) map.setView([lat,lon],16) } else { setStatus('リルート失敗',true) } }) } }
+
+      function onNavPos(pos){
+        const lat=pos.coords.latitude, lon=pos.coords.longitude;
+        // 実方位の決定（センサー優先、なければ移動ベクトル）
+        let bearing = 0; const now=Date.now(); const fresh=(now - S.lastHeadingTs) < 2500;
+        if(fresh){ bearing=norm360(S.heading) }
+        else if(S._prev){ const dy=lat-S._prev.lat, dx=lon-S._prev.lon; if(Math.abs(dy)+Math.abs(dx) > 1e-6){ bearing=norm360(Math.atan2(dx,dy)*180/Math.PI) } }
+        S.bearingTarget = bearing; // なめらか回転のターゲット
+        setCurrentMarker(lat,lon,bearing);
+
+        // 追尾
+        if(S.follow){ const z=Math.max(15,map.getZoom()); map.setView([lat,lon], Math.min(17,z)) }
+
+        S._prev={lat,lon};
+        if(S.useDummy) return;
+
+        const route=S.routes[S.selected]; if(!route) return;
+        const line=turf.lineString(route.geometry.coordinates);
+        const pt=turf.point([lon,lat]);
+        const snapped=turf.nearestPointOnLine(line, pt, {units:'meters'});
+        const distTo=snapped.properties.dist;
+        const snapIdx=snapped.properties.index||0;
+        if(snapIdx>S.lastSnapIdx){ S.lastSnapIdx=snapIdx; updateProgressLayer(route,snapIdx) }
+
+        // 次の案内（読み上げ）
+        const steps=route.legs[0].steps||[];
+        let chosen=null;
+        for(let i=0;i<steps.length;i++){
+          const st=steps[i]; const loc=st.maneuver&&st.maneuver.location; if(!loc) continue;
+          const d=turf.distance(turf.point([lon,lat]), turf.point([loc[0],loc[1]]), {units:'meters'});
+          if(d>5){ chosen={index:i, step:st, dist:d}; break }
+        }
+        if(!chosen && steps.length){ chosen={index:steps.length-1, step:steps[steps.length-1], dist:0} }
+        if(chosen){
+          const msg=`${formatDist(chosen.dist)} 先、${jpInstruction(chosen.step)}`;
+          E.hudNext.textContent=`次の案内 — ${msg}`;
+          const nowMs = Date.now();
+          // 直前と同じ手順はスキップ。距離120m以内で一度だけ読み上げ
+          if(chosen.index !== S.lastSpokenIdx && chosen.dist < 120 && (nowMs - S.lastSpokenTs) > 3000){
+            speakJa(msg);
+            S.lastSpokenIdx = chosen.index;
+            S.lastSpokenTs = nowMs;
+          }
+        }
+
+        // 残り
+        const totalDist=route.distance; const totalDur=etaSeconds(route.distance,S.setMode);
+        const remLine=turf.lineString(route.geometry.coordinates.slice(snapIdx));
+        const remKm=turf.length(remLine,{units:'kilometers'}); const remM=Math.max(0,Math.round(remKm*1000));
+        const remSec = totalDist>0 ? (totalDur*(remM/totalDist)) : 0;
+        E.hudRemDist.textContent=formatDist(remM);
+        E.hudRemTime.textContent=formatDuration(remSec);
+
+        // オフルート
+        const nowMs2=Date.now();
+        if(distTo>offRouteThreshold() && (nowMs2-S.lastRerouteTs)>rerouteCooldownMs()){
+          S.lastRerouteTs=nowMs2;
+          setStatus(`コース外（約${Math.round(distTo)}m）。再検索…`);
+          const cur={lat,lon}; const dest=S.to;
+          if(dest){
+            fetchRoutes(cur,dest,S.setMode).then(rs=>{
+              if(rs&&rs.length){ drawRoutes(rs); setStatus('自動リルート完了'); if(S.follow) map.setView([lat,lon],16) }
+              else { setStatus('リルート失敗',true) }
+            });
+          }
+        }
       }
 
       function speakJa(t){ if(!window.speechSynthesis) return; try{ const u=new SpeechSynthesisUtterance(t); u.lang='ja-JP'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u) }catch{} }
 
-      function initOrientation(){ function scr(){ const a=(screen.orientation&&typeof screen.orientation.angle==='number')? screen.orientation.angle : (typeof window.orientation==='number'? window.orientation:0); return a||0 } function fromAlpha(alpha){ S.heading = norm360(360 - alpha + scr()); S.lastHeadingTs=Date.now() } function gen(e){ const wh=(typeof e.webkitCompassHeading==='number'? e.webkitCompassHeading : null); if(wh!=null && !Number.isNaN(wh)){ S.heading=norm360(wh); S.lastHeadingTs=Date.now() } else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha) } }
-        if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function'){ document.body.addEventListener('click', function once(){ DeviceOrientationEvent.requestPermission().then(st=>{ if(st==='granted'){ window.addEventListener('deviceorientation', gen,{passive:true}); window.addEventListener('deviceorientationabsolute', gen,{passive:true}) } }).catch(()=>{}); document.body.removeEventListener('click', once) }, {once:true}) }
-        else if(window.DeviceOrientationEvent){ window.addEventListener('deviceorientationabsolute', gen,{passive:true}); window.addEventListener('deviceorientation', gen,{passive:true}) }
-        window.addEventListener('orientationchange', ()=>{ S.lastHeadingTs=0 }, {passive:true}) }
+      // ===== デバイス方位（なめらか用のターゲット生成のみ）
+      function initOrientation(){
+        function scr(){ const a=(screen.orientation&&typeof screen.orientation.angle==='number')? screen.orientation.angle : (typeof window.orientation==='number'? window.orientation:0); return a||0 }
+        function fromAlpha(alpha){ S.heading = norm360(360 - alpha + scr()); S.lastHeadingTs=Date.now() }
+        function gen(e){
+          const wh=(typeof e.webkitCompassHeading==='number'? e.webkitCompassHeading : null);
+          if(wh!=null && !Number.isNaN(wh)){ S.heading=norm360(wh); S.lastHeadingTs=Date.now() }
+          else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha) }
+          // ターゲット更新（即時反映ではなくrafでスムーズ化）
+          S.bearingTarget = S.heading;
+        }
+        if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function'){
+          document.body.addEventListener('click', function once(){
+            DeviceOrientationEvent.requestPermission().then(st=>{
+              if(st==='granted'){
+                window.addEventListener('deviceorientation', gen,{passive:true});
+                window.addEventListener('deviceorientationabsolute', gen,{passive:true});
+              }
+            }).catch(()=>{});
+            document.body.removeEventListener('click', once);
+          }, {once:true});
+        } else if(window.DeviceOrientationEvent){
+          window.addEventListener('deviceorientationabsolute', gen,{passive:true});
+          window.addEventListener('deviceorientation', gen,{passive:true});
+        }
+        window.addEventListener('orientationchange', ()=>{ S.lastHeadingTs=0 }, {passive:true});
+      }
       initOrientation();
 
       // ===== Dummy location fallback
@@ -250,7 +383,7 @@
       E.startNav.addEventListener('click', startNavigation)
       E.stopNav.addEventListener('click', stopNavigation)
       E.chkFollow.addEventListener('change',()=>{ S.follow=E.chkFollow.checked })
-      E.chkRotate.addEventListener('change',()=>{ S.rotate=E.chkRotate.checked; if(!S.rotate){ try{ E.compass.style.transform='none' }catch{} } })
+      E.chkRotate.addEventListener('change',()=>{ S.rotate=E.chkRotate.checked })
       ;[E.from,E.to].forEach(i=> i.addEventListener('keydown',e=>{ if(e.key==='Enter') E.search.click() }))
 
       // Sidebar toggle & mobile more toggle
@@ -259,10 +392,10 @@
       // Bottom sheet close on tap of drag bar
       qs('#route-steps').addEventListener('click',()=>{ const s=qs('#route-steps'); s.style.display = (s.style.display==='none'?'block':'none') })
 
-      // Init
+      // 初期化完了
       setStatus('初期化完了 — 出発地と目的地を入力して検索してください')
 
-      // ===== Mini self tests (do not change) =====
+      // ===== Mini self tests (既存+追加) =====
       ;(function(){
         function eq(name,a,b){ if(a!==b){ console.error('TEST FAIL',name,a,b) } else { console.log('TEST OK',name) } }
         eq('formatDist_500', formatDist(500), '500 m')
@@ -270,6 +403,8 @@
         eq('formatDuration_59m', formatDuration(59*60), '59分')
         eq('formatDuration_2h5m', formatDuration(2*3600+5*60), '2時間5分')
         const d=10000; const f=Math.round(etaSeconds(d,'foot')/60), b=Math.round(etaSeconds(d,'bike')/60), c=Math.round(etaSeconds(d,'driving')/60); if(!(f>b && b>c)) console.error('TEST FAIL eta order'); else console.log('TEST OK eta order')
+        // 追加: 角度差最短経路テスト
+        const sd = shortestDelta(350, 10); if(!(sd>0 && Math.abs(sd)<=20)) console.error('TEST FAIL shortestDelta'); else console.log('TEST OK shortestDelta')
       })()
 
       // Export for console
