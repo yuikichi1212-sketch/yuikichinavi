@@ -291,8 +291,10 @@
           else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha + 180) }
 
           // ナビ中のみ回転ターゲット更新
-          if(S.nav && S.rotate){ S.targetBearing = S.heading+ 180 }
+        if(s.nav && s.rotate){ 
+    s.targetBearing = s.heading + 180 
 }
+
 
         }
         if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function'){
