@@ -288,7 +288,8 @@
         function gen(e){
           const wh=(typeof e.webkitCompassHeading==='number'? e.webkitCompassHeading : null);
           if(wh!=null && !Number.isNaN(wh)){ S.heading=norm360(wh); S.lastHeadingTs=Date.now() }
-          else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha) }
+          else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha + 180) }
+
           // ナビ中のみ回転ターゲット更新
           if(S.nav && S.rotate){ S.targetBearing = S.heading }
         }
