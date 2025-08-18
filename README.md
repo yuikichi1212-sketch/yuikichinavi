@@ -290,9 +290,8 @@
           if(wh!=null && !Number.isNaN(wh)){ S.heading=norm360(wh); S.lastHeadingTs=Date.now() }
           else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha) }
           // ナビ中のみ回転ターゲット更新
-          if(s.nav && s.rotate){ s.targetBearing = s.heading ;
-}
-
+          if(S.nav && S.rotate){ S.targetBearing = S.heading }
+        }
         if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function'){
           document.body.addEventListener('click', function once(){
             DeviceOrientationEvent.requestPermission().then(st=>{
