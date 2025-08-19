@@ -289,9 +289,20 @@
           const wh=(typeof e.webkitCompassHeading==='number'? e.webkitCompassHeading : null);
           if(wh!=null && !Number.isNaN(wh)){ S.heading=norm360(wh); S.lastHeadingTs=Date.now() }
           else if(typeof e.alpha==='number' && !Number.isNaN(e.alpha)){ fromAlpha(e.alpha) }
-          // ナビ中のみ回転ターゲット更新
-          if(S.nav && S.rotate){ S.targetBearing = S.heading }
-        }
+         
+    // 1m先を計算（経度・緯度換算、だいたい）
+    const R = 6378137; // 地球の半径(m)
+    let dNorth = Math.cos(s.heading * Math.PI / 180) * 1.0; // 北方向に1m
+    let dEast  = Math.sin(s.heading * Math.PI / 180) * 1.0; // 東方向に1m
+    let newLat = lat1 + (dNorth / R) * (180 / Math.PI);
+    let newLng = lng1 + (dEast / (R * Math.cos(Math.PI * lat1 / 180))) * (180 / Math.PI);
+
+    // 角度を計算（現在地→1m先）
+    let dx = newLng - lng1;
+    let dy = newLat - lat1;
+    s.targetBearing = Math.atan2(dx, dy) * 180 / Math.PI;
+}
+         
         if(window.DeviceOrientationEvent && typeof DeviceOrientationEvent.requestPermission==='function'){
           document.body.addEventListener('click', function once(){
             DeviceOrientationEvent.requestPermission().then(st=>{
