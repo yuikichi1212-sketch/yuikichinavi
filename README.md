@@ -1,1 +1,163 @@
-{"name":"超完全版ナビ","type":"code/html","content":"<!DOCTYPE html>\n<html lang="ja">\n<head>\n <meta charset="UTF-8">\n <title>ゆいきちナビ 超完全版</title>\n <meta name="viewport" content="width=device-width, initial-scale=1.0">\n <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css\">\n <style>\n body, html { margin:0; padding:0; height:100%; }\n #map { width:100%; height:100%; }\n #controls {\n position: fixed;\n top: 0; left: 0; right: 0;\n background: rgba(255,255,255,0.9);\n z-index: 1000;\n padding: 4px;\n font-size: 12px;\n }\n #controls input, #controls button { font-size:12px; }\n #info {\n position: fixed;\n bottom: 0; left: 0; right: 0;\n max-height: 30%;\n overflow:auto;\n background: rgba(255,255,255,0.9);\n font-size: 10px;\n padding: 4px;\n z-index: 1000;\n }\n .collapsed { display: none; }\n </style>\n</head>\n<body>\n <div id="controls">\n 出発: <input id="start" type="text" placeholder="出発地">\n 到着: <input id="end" type="text" placeholder="目的地">\n <button id="searchBtn">検索</button>\n <button id="toggleInfo">詳細切替</button>\n <button id="stopNav">ナビ停止</button>\n </div>\n <div id="map"></div>\n <div id="info"></div>\n\n <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js\"></script>\n <script src="https://unpkg.com/leaflet-rotatedmarker@0.2.0/leaflet.rotatedMarker.js\"></script>\n <script>\n const map = L.map('map').setView([35.1709, 136.8815], 15);\n L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {\n maxZoom: 19\n }).addTo(map);\n\n let routeLine;\n let stepMarkers = [];\n let userMarker, userHeading = 0;\n let watchId;\n let navMode = false;\n let targetBearing = 0;\n let currentBearing = 0;\n\n const infoBox = document.getElementById("info");\n\n function speak(text){\n const u = new SpeechSynthesisUtterance(text);\n u.lang = 'ja-JP';\n speechSynthesis.speak(u);\n }\n\n document.getElementById("searchBtn").onclick = () => {\n const start = document.getElementById("start").value;\n const end = document.getElementById("end").value;\n if(!start || !end){ alert("出発地と到着地を入力"); return; }\n // 仮ルート: 実際はAPIで検索\n if(routeLine) map.removeLayer(routeLine);\n stepMarkers.forEach(m => map.removeLayer(m));\n stepMarkers=[];\n const coords = [\n [35.1709,136.8815],\n [35.1715,136.8850],\n [35.1720,136.8890]\n ];\n routeLine = L.polyline(coords,{color:'blue'}).addTo(map);\n coords.forEach((c,i)=>{\n if(i>0){\n const m = L.marker(c).addTo(map).bindPopup((i)+"番目曲がる");\n stepMarkers.push(m);\n }\n });\n map.fitBounds(routeLine.getBounds());\n infoBox.innerHTML = "ルート検索完了";\n navMode = true;\n speak("ナビを開始します");\n };\n\n document.getElementById("toggleInfo").onclick = ()=>{\n infoBox.classList.toggle("collapsed");\n };\n\n document.getElementById("stopNav").onclick = ()=>{\n navMode = false;\n if(routeLine) map.removeLayer(routeLine);\n stepMarkers.forEach(m => map.removeLayer(m));\n stepMarkers=[];\n infoBox.innerHTML = "ナビ停止";\n speak("ナビを停止します");\n };\n\n // 現在地トラッキング\n function onLocation(pos){\n const lat = pos.coords.latitude;\n const lng = pos.coords.longitude;\n if(!userMarker){\n userMarker = L.marker([lat,lng],{rotationAngle:userHeading,icon:L.icon({iconUrl:"https://cdn-icons-png.flaticon.com/512/684/684908.png\",iconSize:[30,30]})}).addTo(map);\n } else {\n userMarker.setLatLng([lat,lng]);\n userMarker.setRotationAngle(userHeading);\n }\n if(navMode){\n // 1m先を上に補正\n const rad = userHeading*Math.PI/180;\n const aheadLat = lat + (Math.cos(rad)*0.000009);\n const aheadLng = lng + (Math.sin(rad)0.000012);\n map.setView([lat,lng], map.getZoom(), {animate:true});\n targetBearing = userHeading;\n }\n }\n\n function onError(err){\n console.error(err);\n }\n\n if(navigator.geolocation){\n watchId = navigator.geolocation.watchPosition(onLocation,onError,{enableHighAccuracy:true});\n }\n\n if(window.DeviceOrientationEvent){\n window.addEventListener("deviceorientation", (e)=>{\n if(e.absolute || e.webkitCompassHeading){\n let heading = e.webkitCompassHeading || 360 - e.alpha;\n userHeading = heading;\n }\n });\n }\n\n // スムーズ回転\n function animate(){\n if(navMode){\n const diff = targetBearing - currentBearing;\n currentBearing += diff0.05;\n map.setBearing?.(currentBearing);\n }\n requestAnimationFrame(animate);\n }\n animate();\n\n </script>\n</body>\n</html>"}
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ゆいきちナビ 超完全版</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css">
+  <style>
+    body, html {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      width: 100%;
+      font-family: sans-serif;
+    }
+    #map {
+      height: 100%;
+      width: 100%;
+    }
+    #controls {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      background: rgba(255,255,255,0.9);
+      z-index: 1000;
+      padding: 4px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    #infoBox {
+      max-height: 150px;
+      overflow-y: auto;
+      font-size: 12px;
+      background: rgba(255,255,255,0.9);
+      padding: 5px;
+      border-radius: 5px;
+    }
+    #toggleInfo {
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .leaflet-control-zoom {
+      margin-top: 200px !important;
+    }
+    .compass-icon {
+      width: 24px;
+      height: 24px;
+      transform-origin: center center;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <input type="text" id="from" placeholder="出発地">
+    <input type="text" id="to" placeholder="目的地">
+    <button id="searchBtn">検索</button>
+    <button id="stopBtn">ナビ停止</button>
+    <button id="toggleInfo">詳細表示/非表示</button>
+    <div id="infoBox"></div>
+  </div>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    const map = L.map('map').setView([35.1815, 136.9066], 15);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let userMarker;
+    let compassMarker;
+    let routeLine;
+    let stepMarkers = [];
+    let navActive = false;
+    let heading = 0;
+    let targetBearing = 0;
+    let rotateEnabled = false;
+
+    const infoBox = document.getElementById("infoBox");
+    const toggleInfo = document.getElementById("toggleInfo");
+
+    toggleInfo.onclick = () => {
+      if(infoBox.style.display === "none"){
+        infoBox.style.display = "block";
+      } else {
+        infoBox.style.display = "none";
+      }
+    };
+
+    // 現在地取得
+    if(navigator.geolocation){
+      navigator.geolocation.watchPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        if(!userMarker){
+          userMarker = L.marker([lat, lng]).addTo(map);
+          compassMarker = L.marker([lat, lng], {
+            icon: L.divIcon({
+              className: "",
+              html: '<div class="compass-icon">🧭</div>'
+            })
+          }).addTo(map);
+          map.setView([lat, lng], 17);
+        } else {
+          userMarker.setLatLng([lat, lng]);
+          compassMarker.setLatLng([lat, lng]);
+        }
+        if(navActive && rotateEnabled){
+          smoothRotate();
+        }
+      }, err => console.error(err), {enableHighAccuracy: true});
+    }
+
+    // デバイスの向きを取得
+    window.addEventListener("deviceorientationabsolute", e => {
+      heading = e.alpha;
+    });
+
+    function smoothRotate(){
+      const offset = 180; // ← ここで180度補正
+      targetBearing = heading + offset;
+      map.setBearing ? map.setBearing(targetBearing) : rotateMapCSS(targetBearing);
+      document.querySelector(".compass-icon").style.transform = `rotate(${heading}deg)`;
+    }
+
+    function rotateMapCSS(angle){
+      document.getElementById("map").style.transform = `rotate(${angle}deg)`;
+    }
+
+    // ダミールート
+    document.getElementById("searchBtn").onclick = () => {
+      if(routeLine) map.removeLayer(routeLine);
+      stepMarkers.forEach(m => map.removeLayer(m));
+      stepMarkers = [];
+
+      const route = [
+        [35.1815, 136.9066],
+        [35.1820, 136.9080],
+        [35.1830, 136.9095]
+      ];
+
+      routeLine = L.polyline(route, {color:'blue'}).addTo(map);
+      map.fitBounds(routeLine.getBounds());
+      navActive = true;
+      rotateEnabled = true;
+      infoBox.innerHTML = "次の案内を開始します";
+      speechSynthesis.speak(new SpeechSynthesisUtterance("次の案内を開始します"));
+    };
+
+    document.getElementById("stopBtn").onclick = () => {
+      navActive = false;
+      rotateEnabled = false;
+      if(routeLine) map.removeLayer(routeLine);
+      stepMarkers.forEach(m => map.removeLayer(m));
+      stepMarkers = [];
+      infoBox.innerHTML = "ナビを停止しました";
+      speechSynthesis.speak(new SpeechSynthesisUtterance("ナビを停止しました"));
+    };
+  </script>
+</body>
+</html>
