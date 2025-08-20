@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>ゆいきちナビ — 1m先方向で地図回転・完全統合版</title>
+  <title>ゆいきちナビ — 1m先方向で地図回転・完全統合版 + ログイン</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     :root{
@@ -86,6 +86,15 @@
       position:absolute;left:7px;top:-10px;
       width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:10px solid #1e90ff;
     }
+
+    /* === Auth モーダル === */
+    .modal{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:center;justify-content:center;z-index:2000}
+    .modal .card{background:#fff;border-radius:14px;box-shadow:0 16px 40px rgba(0,0,0,.2);padding:16px;width:min(92vw,420px)}
+    .modal .card h3{margin:0 0 8px 0}
+    .modal .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:6px}
+    .modal input{padding:8px;border:1px solid #e4e8ee;border-radius:10px;flex:1}
+    .modal .btns{display:flex;gap:8px;margin-top:8px}
+    .badge{font-size:12px;color:#555}
   </style>
 </head>
 <body>
@@ -99,6 +108,10 @@
         <button id="swap" class="btn" title="入れ替え">⇄</button>
         <button id="search" class="btn primary">検索</button>
         <button id="toggle-more" class="btn collapse" aria-expanded="false">詳細 ▾</button>
+        <span style="flex:1"></span>
+        <span id="auth-chip" class="badge">未ログイン</span>
+        <button id="btn-auth" class="btn">ログイン</button>
+        <button id="btn-logout" class="btn" style="display:none">ログアウト</button>
       </div>
       <div id="more" class="bar collapse-area" style="margin-top:6px">
         <div class="muted">移動モード:</div>
@@ -115,6 +128,26 @@
         <button id="toggle-sidebar" class="btn" title="右パネルの表示/非表示">パネル切替</button>
       </div>
     </header>
+
+    <!-- ===== 認証モーダル ===== -->
+    <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+      <div class="card">
+        <h3 id="auth-title">ログイン / 新規登録</h3>
+        <div class="row">
+          <input id="auth-email" type="email" placeholder="メールアドレス" autocomplete="username" />
+        </div>
+        <div class="row">
+          <input id="auth-pass" type="password" placeholder="パスワード" autocomplete="current-password" />
+        </div>
+        <div class="btns">
+          <button id="btn-email-login" class="btn primary">メールでログイン</button>
+          <button id="btn-email-signup" class="btn">新規登録</button>
+          <button id="btn-google" class="btn">Googleでログイン</button>
+          <button id="btn-auth-cancel" class="btn" style="margin-left:auto">閉じる</button>
+        </div>
+        <div id="auth-msg" class="muted" style="margin-top:6px"></div>
+      </div>
+    </div>
 
     <!-- ===== 地図エリア ===== -->
     <div id="main">
@@ -147,12 +180,15 @@
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
+  <!-- Firebase v11 -->
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.0.1/firebase-auth.js"></script>
   <script>
   // ====== 再初期化ガード ======
-  if (window._yk_full_v5_rot1m) {
+  if (window._yk_full_v5_rot1m_login) {
     console.warn('already initialized');
   } else {
-    window._yk_full_v5_rot1m = true;
+    window._yk_full_v5_rot1m_login = true;
 
     (function(){
       /*** =========================
@@ -171,6 +207,9 @@
         animRAF:null,        // requestAnimationFrame ID
         // 現在地まわり
         curMarker:null,
+        // 認証
+        loggedIn:false,
+        user:null,
       };
 
       /*** =========================
@@ -187,6 +226,11 @@
         compass: q('#compass-needle'), sidebar: q('#sidebar'),
         stepsSheet: q('#route-steps'), stepsBody: q('#route-steps-body'),
         toggleMore: q('#toggle-more'), more: q('#more'), toggleSidebar: q('#toggle-sidebar'),
+        // Auth
+        authChip: q('#auth-chip'), btnAuth: q('#btn-auth'), btnLogout: q('#btn-logout'),
+        modal: q('#auth-modal'), email: q('#auth-email'), pass: q('#auth-pass'),
+        btnEmailLogin: q('#btn-email-login'), btnEmailSignup: q('#btn-email-signup'), btnGoogle: q('#btn-google'), btnAuthCancel: q('#btn-auth-cancel'),
+        authMsg: q('#auth-msg'),
       };
 
       /*** =========================
@@ -408,12 +452,13 @@
 
       async function resolveFromInput(){ const v=(E.from.value||'').trim(); if(!v || v==='現在地' || v==='いま' || v.toLowerCase()==='current'){ return await getCurrentLocation() } const g=await geocode(v); if(!g) throw new Error('出発地が見つかりません'); return g }
       async function resolveToInput(){ const v=(E.to.value||'').trim(); const g=parseLatLon(v) || (v? await geocode(v):null); if(!g) throw new Error('目的地が見つかりません'); return g }
-      function getCurrentLocation(){ return new Promise((res,rej)=>{ if(!navigator.geolocation){ rej(new Error('この端末は位置情報に対応していません')); return } navigator.geolocation.getCurrentPosition(p=> res({lat:p.coords.latitude, lon:p.coords.longitude, display_name:'現在地'}), err=> rej(err), {enableHighAccuracy:true, timeout:12000}) }) }
+      function getCurrentLocation(){ return new Promise((res,rej)=>{ if(!S.loggedIn){ rej(new Error('現在地機能はログイン後に利用できます')); return } if(!navigator.geolocation){ rej(new Error('この端末は位置情報に対応していません')); return } navigator.geolocation.getCurrentPosition(p=> res({lat:p.coords.latitude, lon:p.coords.longitude, display_name:'現在地'}), err=> rej(err), {enableHighAccuracy:true, timeout:12000}) }) }
 
       /*** =========================
        *      ナビ実行
        * ========================= */
       function startNavigation(){
+        if(!S.loggedIn){ setStatus('ログインが必要です（ツールバーの「ログイン」から）',true); E.btnAuth.focus(); return }
         if(S.nav) return;
         if(!S.routes.length){ setStatus('先にルートを検索してください',true); return }
         S.nav=true; setStatus('ナビ開始'); E.startNav.disabled=true; E.stopNav.disabled=false;
@@ -601,6 +646,65 @@
 
       // 公開（デバッグ用）
       window._yuikichi = { state:S };
+
+      /*** =========================
+       *      Firebase 認証
+       * ========================= */
+      const firebaseConfig = {
+        apiKey: 'YOUR_API_KEY',
+        authDomain: 'YOUR_PROJECT_ID.firebaseapp.com',
+        projectId: 'YOUR_PROJECT_ID',
+      };
+      try{ firebase.initializeApp(firebaseConfig) }catch(e){ /* already init in HMR */ }
+      const auth = firebase.auth();
+      const provider = new firebase.auth.GoogleAuthProvider();
+
+      function updateAuthUI(){
+        if(S.loggedIn){
+          E.authChip.textContent = (S.user && S.user.displayName)? `ログイン中: ${S.user.displayName}` : 'ログイン中';
+          E.btnAuth.style.display='none';
+          E.btnLogout.style.display='inline-block';
+          E.modal.style.display='none';
+          E.authMsg.textContent='';
+          setStatus('ログインしました');
+        } else {
+          E.authChip.textContent='未ログイン';
+          E.btnAuth.style.display='inline-block';
+          E.btnLogout.style.display='none';
+        }
+      }
+
+      // Auth events
+      E.btnAuth.addEventListener('click', ()=>{ E.modal.style.display='flex'; E.email.focus() })
+      E.btnAuthCancel.addEventListener('click', ()=>{ E.modal.style.display='none' })
+      E.btnLogout.addEventListener('click', async ()=>{ try{ await auth.signOut(); }catch(e){ console.warn(e) } })
+
+      E.btnEmailLogin.addEventListener('click', async ()=>{
+        try{
+          const cred = await auth.signInWithEmailAndPassword(E.email.value.trim(), E.pass.value);
+          S.loggedIn = true; S.user = cred.user; updateAuthUI();
+        }catch(e){ E.authMsg.textContent = e && e.message ? e.message : 'ログインに失敗しました'; }
+      })
+      E.btnEmailSignup.addEventListener('click', async ()=>{
+        try{
+          const cred = await auth.createUserWithEmailAndPassword(E.email.value.trim(), E.pass.value);
+          S.loggedIn = true; S.user = cred.user; updateAuthUI();
+        }catch(e){ E.authMsg.textContent = e && e.message ? e.message : '新規登録に失敗しました'; }
+      })
+      E.btnGoogle.addEventListener('click', async ()=>{
+        try{
+          const result = await auth.signInWithPopup(provider);
+          S.loggedIn = true; S.user = result.user; updateAuthUI();
+        }catch(e){ E.authMsg.textContent = e && e.message ? e.message : 'Googleログインに失敗しました'; }
+      })
+
+      auth.onAuthStateChanged((user)=>{
+        S.loggedIn = !!user; S.user = user||null; updateAuthUI();
+      });
+
+      // クリックでモーダル外を押したら閉じる
+      E.modal.addEventListener('click', (ev)=>{ if(ev.target===E.modal){ E.modal.style.display='none' } });
+
     })();
   }
   </script>
