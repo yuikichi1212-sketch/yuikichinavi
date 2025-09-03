@@ -1,303 +1,446 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-  <title>超フル解説ナビ完全版</title>
+  <meta charset="UTF-8">
+  <title>ゆいきちナビ 超完全版 (Part 1)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+  <!-- Leaflet 本体 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+  <!-- CSS セクション -->
   <style>
-    /* ====== 全体レイアウト ====== */
-    body, html {
-      margin: 0;
-      padding: 0;
+    /* 全体リセットと基本設定 */
+    html, body {
       height: 100%;
-      width: 100%;
-      font-family: sans-serif;
+      margin: 0;
+      font-family: "Segoe UI", sans-serif;
       background: #f0f0f0;
     }
 
+    /* 地図エリア */
     #map {
       height: 100%;
       width: 100%;
+      background: #ddd;
     }
 
-    /* ====== コントロールパネル ====== */
+    /* コントロールUI */
     #controls {
       position: absolute;
       top: 10px;
       left: 10px;
-      width: 300px;
+      z-index: 1000;
       background: rgba(255, 255, 255, 0.95);
-      border-radius: 8px;
       padding: 12px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
-      z-index: 5;
-      font-size: 14px;
+      border-radius: 8px;
+      box-shadow: 0 3px 6px rgba(0,0,0,0.25);
+      width: 260px;
     }
 
     #controls input {
-      width: calc(100% - 12px);
+      width: 100%;
       margin-bottom: 8px;
-      padding: 8px;
+      padding: 6px;
       font-size: 14px;
+      border: 1px solid #aaa;
+      border-radius: 4px;
     }
 
     #controls button {
       width: 100%;
-      padding: 10px;
+      padding: 8px;
       margin-top: 6px;
-      border: none;
-      background: #4285F4;
-      color: white;
-      border-radius: 4px;
-      font-size: 15px;
-      cursor: pointer;
-    }
-
-    #controls button:hover {
-      background: #3367D6;
-    }
-
-    /* ====== トグルボタン ====== */
-    #toggleBtn {
-      position: absolute;
-      bottom: 20px;
-      right: 20px;
-      z-index: 5;
-      background: rgba(66,133,244,0.9);
+      background: #0078ff;
       color: #fff;
       border: none;
-      border-radius: 50%;
-      width: 55px;
-      height: 55px;
-      font-size: 28px;
-      cursor: pointer;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    /* 情報表示領域 */
+    #info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      z-index: 1000;
+      background: rgba(255,255,255,0.85);
+      padding: 8px;
+      font-size: 13px;
+      border-radius: 6px;
+      max-width: 90%;
     }
   </style>
 </head>
 <body>
-  <div id="map"></div>
-
-  <!-- コントロールパネル -->
+  <!-- UIコントロール -->
   <div id="controls">
-    <h3>ナビゲーション設定</h3>
-    <input id="start" type="text" placeholder="出発地を入力" />
-    <input id="end" type="text" placeholder="目的地を入力" />
-    <button onclick="startNavigation()">ナビ開始</button>
-    <button onclick="stopNavigation()">ナビ停止</button>
+    <input id="end" placeholder="目的地を入力 (例: 栄駅)">
+    <button id="searchBtn">ルート検索</button>
+    <button id="stopBtn">ナビ停止</button>
   </div>
 
-  <!-- トグルボタン -->
-  <button id="toggleBtn" onclick="toggleControls()">☰</button>
+  <!-- 地図 -->
+  <div id="map"></div>
 
-  <!-- Google Maps API 読み込み -->
-  <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=places"></script>
+  <!-- 現在地などの情報 -->
+  <div id="info">現在地を取得中...</div>
 
+  <!-- JavaScript セクション -->
   <script>
-    /******************************************************
-     * グローバル変数宣言
-     ******************************************************/
-    let map;                     // Google Map オブジェクト
-    let directionsService;       // ルート検索サービス
-    let directionsRenderer;      // ルート描画オブジェクト
-    let stepMarkers = [];        // 曲がりポイントのマーカー配列
-    let watchId = null;          // 現在地追跡の ID
-    let isNavigating = false;    // ナビ中かどうか
-    let currentPositionMarker = null;  // 現在地マーカー
+    console.log("=== ゆいきちナビ Part1 起動 ===");
 
-    /******************************************************
-     * 初期化処理
-     ******************************************************/
-    function initMap() {
-      console.log("[initMap] マップを初期化します");
+    // 1. Leafletマップを初期化
+    const map = L.map("map", {
+      zoomControl: true, // デフォルトのズームボタンON
+    }).setView([35.170915, 136.881537], 14); // 初期値: 名古屋駅
 
-      // 地図を作成
-      map = new google.maps.Map(document.getElementById("map"), {
-        center: { lat: 35.1815, lng: 136.9066 }, // 名古屋駅あたり
-        zoom: 14,
-        mapTypeControl: false,
-        streetViewControl: false,
-        rotateControl: true, // 回転を有効化
-      });
+    // 2. OpenStreetMapのタイルレイヤーを追加
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors"
+    }).addTo(map);
 
-      // Directions API サービスと描画器を作成
-      directionsService = new google.maps.DirectionsService();
-      directionsRenderer = new google.maps.DirectionsRenderer({
-        suppressMarkers: true, // デフォルトマーカー非表示
-      });
-      directionsRenderer.setMap(map);
+    // 3. 現在地を表示するマーカー
+    let userMarker = null;
+
+    // 4. 現在地を取得して追従
+    map.locate({setView: true, watch: true, enableHighAccuracy: true});
+
+    map.on("locationfound", (e) => {
+      console.log("現在地を取得:", e.latlng);
+
+      // 初回のみマーカーを作成
+      if (!userMarker) {
+        userMarker = L.marker(e.latlng).addTo(map);
+      } else {
+        userMarker.setLatLng(e.latlng);
+      }
+
+      // 情報を更新
+      document.getElementById("info").innerText =
+        `現在地: ${e.latlng.lat.toFixed(5)}, ${e.latlng.lng.toFixed(5)}`;
+    });
+
+    map.on("locationerror", (e) => {
+      console.error("位置情報エラー:", e.message);
+      document.getElementById("info").innerText =
+        "位置情報が取得できませんでした";
+    });
+  </script>
+</body>
+</html>
+    // ==========================================================
+    // Part 2: ルート検索と経路表示
+    // ==========================================================
+
+    // 経路線を管理するレイヤー
+    let routeLine = null;
+
+    // 曲がりマーカーを管理する配列
+    let turnMarkers = [];
+
+    // Nominatim APIで住所を座標に変換する関数
+    async function geocode(address) {
+      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data && data.length > 0) {
+        return [parseFloat(data[0].lat), parseFloat(data[0].lon)];
+      } else {
+        throw new Error("住所が見つかりません: " + address);
+      }
     }
 
-    /******************************************************
-     * ナビ開始処理
-     ******************************************************/
-    function startNavigation() {
-      console.log("[startNavigation] ナビを開始します");
+    // OSRM APIでルートを取得する関数
+    async function getRoute(startLatLng, endLatLng) {
+      const url = `https://router.project-osrm.org/route/v1/walking/${startLatLng.lng},${startLatLng.lat};${endLatLng[1]},${endLatLng[0]}?overview=full&geometries=geojson&steps=true`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.code !== "Ok") throw new Error("ルートが見つかりません");
+      return data.routes[0];
+    }
 
-      const start = document.getElementById("start").value;
+    // ルート表示関数
+    async function showRoute(endAddress) {
+      try {
+        if (!userMarker) {
+          alert("現在地がまだ取得できていません");
+          return;
+        }
+
+        // 目的地をジオコーディング
+        const endLatLng = await geocode(endAddress);
+        console.log("目的地座標:", endLatLng);
+
+        // 出発地 = 現在地
+        const startLatLng = userMarker.getLatLng();
+        console.log("出発地:", startLatLng);
+
+        // OSRMでルート取得
+        const route = await getRoute(startLatLng, endLatLng);
+        console.log("ルート取得:", route);
+
+        // 既存のルートを消去
+        if (routeLine) {
+          map.removeLayer(routeLine);
+          routeLine = null;
+        }
+        turnMarkers.forEach(m => map.removeLayer(m));
+        turnMarkers = [];
+
+        // ルート線を追加
+        routeLine = L.geoJSON(route.geometry, {
+          style: {color: "blue", weight: 5}
+        }).addTo(map);
+
+        // 曲がり角マーカーを追加
+        route.legs[0].steps.forEach(step => {
+          const coord = step.maneuver.location;
+          const marker = L.marker([coord[1], coord[0]], {
+            icon: L.divIcon({
+              className: "turn-marker",
+              html: "➡️",
+              iconSize: [20, 20]
+            })
+          }).addTo(map);
+          turnMarkers.push(marker);
+        });
+
+        // 全体を表示
+        map.fitBounds(routeLine.getBounds());
+
+        document.getElementById("info").innerText = "ルートを表示しました！";
+
+      } catch (err) {
+        console.error("ルート表示エラー:", err);
+        alert("ルートを表示できません: " + err.message);
+      }
+    }
+
+    // 検索ボタンの動作
+    document.getElementById("searchBtn").addEventListener("click", async () => {
       const end = document.getElementById("end").value;
-
-      if (!start || !end) {
-        alert("出発地と目的地を入力してください");
+      if (!end) {
+        alert("目的地を入力してください");
         return;
       }
+      await showRoute(end);
+    });
 
-      // Directions API を使ってルート検索
-      directionsService.route(
-        {
-          origin: start,
-          destination: end,
-          travelMode: google.maps.TravelMode.WALKING,
-        },
-        (result, status) => {
-          console.log("[startNavigation] Directions API ステータス:", status);
-
-          if (status === "OK") {
-            directionsRenderer.setDirections(result);
-
-            // 古いマーカーを削除
-            stepMarkers.forEach(m => m.setMap(null));
-            stepMarkers = [];
-
-            // 各ステップにマーカーを設置
-            const steps = result.routes[0].legs[0].steps;
-            console.log("[startNavigation] ステップ数:", steps.length);
-
-            steps.forEach((step, i) => {
-              console.log("[startNavigation] ステップ", i+1, step.instructions);
-
-              const marker = new google.maps.Marker({
-                position: step.start_location,
-                map: map,
-                label: `${i+1}`,
-              });
-              stepMarkers.push(marker);
-            });
-
-            // 音声案内
-            speak("ナビを開始します。");
-
-            // 現在地追跡を開始
-            if (navigator.geolocation) {
-              watchId = navigator.geolocation.watchPosition(
-                pos => {
-                  const latlng = {
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude,
-                  };
-                  console.log("[位置情報]", latlng);
-
-                  // 現在地マーカーを更新
-                  if (!currentPositionMarker) {
-                    currentPositionMarker = new google.maps.Marker({
-                      position: latlng,
-                      map: map,
-                      icon: {
-                        path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-                        scale: 5,
-                        fillColor: "blue",
-                        fillOpacity: 0.8,
-                        strokeWeight: 2,
-                        rotation: 0
-                      }
-                    });
-                  } else {
-                    currentPositionMarker.setPosition(latlng);
-                  }
-
-                  // 地図を現在地の中央に固定
-                  map.setCenter(latlng);
-
-                  // コンパス回転開始
-                  if (!isNavigating) {
-                    window.addEventListener("deviceorientationabsolute", handleOrientation, true);
-                    isNavigating = true;
-                  }
-                },
-                err => console.error("[位置情報エラー]", err),
-                { enableHighAccuracy: true }
-              );
-            }
-          } else {
-            alert("ルートを取得できませんでした: " + status);
-          }
-        }
-      );
-    }
-
-    /******************************************************
-     * ナビ停止処理
-     ******************************************************/
-    function stopNavigation() {
-      console.log("[stopNavigation] ナビを停止します");
-
-      if (watchId) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
+    // ナビ停止ボタン
+    document.getElementById("stopBtn").addEventListener("click", () => {
+      if (routeLine) {
+        map.removeLayer(routeLine);
+        routeLine = null;
       }
-      stepMarkers.forEach(m => m.setMap(null));
-      stepMarkers = [];
-      if (currentPositionMarker) {
-        currentPositionMarker.setMap(null);
-        currentPositionMarker = null;
-      }
-      isNavigating = false;
-      speak("ナビを終了しました。");
-    }
+      turnMarkers.forEach(m => map.removeLayer(m));
+      turnMarkers = [];
+      document.getElementById("info").innerText = "ナビを停止しました";
+    });
+    // ==========================================================
+    // Part 3: コンパス・地図回転・音声案内
+    // ==========================================================
 
-    /******************************************************
-     * コンパス（端末の向き）処理
-     ******************************************************/
+    let compassHeading = 0;   // デバイスの向き
+    let navigating = false;   // ナビ中フラグ
+
+    // コンパスイベントを処理
     function handleOrientation(event) {
-      if (isNavigating && currentPositionMarker) {
-        let heading = event.alpha;
-        console.log("[handleOrientation] 端末の角度:", heading);
+      let heading;
 
-        if (typeof heading === "number") {
-          // マーカーを回転
-          currentPositionMarker.setIcon({
-            path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
-            scale: 5,
-            fillColor: "blue",
-            fillOpacity: 0.8,
-            strokeWeight: 2,
-            rotation: 360 - heading
-          });
+      if (event.webkitCompassHeading) {
+        heading = event.webkitCompassHeading; // iOS
+      } else if (event.alpha) {
+        heading = 360 - event.alpha; // Android
+      }
 
-          // 地図を回転（ナビ中のみ）
-          map.setHeading(heading);
+      if (heading !== null && !isNaN(heading)) {
+        compassHeading = heading;
+
+        if (navigating) {
+          map.setBearing(compassHeading); // ← mapを回転
         }
       }
     }
 
-    /******************************************************
-     * 音声読み上げ
-     ******************************************************/
+    // 地図に bearing を追加する関数（Leaflet拡張）
+    L.Map.include({
+      setBearing: function(angle) {
+        const mapContainer = this.getContainer();
+        mapContainer.style.transformOrigin = "center center";
+        mapContainer.style.transition = "transform 0.3s linear";
+        mapContainer.style.transform = `rotate(${angle}deg)`;
+      }
+    });
+
+    // 音声読み上げ関数
     function speak(text) {
-      console.log("[speak]", text);
-      const synth = window.speechSynthesis;
       const utter = new SpeechSynthesisUtterance(text);
       utter.lang = "ja-JP";
-      synth.speak(utter);
+      speechSynthesis.speak(utter);
     }
 
-    /******************************************************
-     * コントロール表示切替
-     ******************************************************/
-    function toggleControls() {
-      const controls = document.getElementById("controls");
-      if (controls.style.display === "none") {
-        controls.style.display = "block";
-        console.log("[toggleControls] コントロールを表示");
-      } else {
-        controls.style.display = "none";
-        console.log("[toggleControls] コントロールを非表示");
+    // ルート案内に音声追加（Part 2 の showRoute を上書き）
+    async function showRoute(endAddress) {
+      try {
+        if (!userMarker) {
+          alert("現在地がまだ取得できていません");
+          return;
+        }
+
+        const endLatLng = await geocode(endAddress);
+        const startLatLng = userMarker.getLatLng();
+        const route = await getRoute(startLatLng, endLatLng);
+
+        if (routeLine) {
+          map.removeLayer(routeLine);
+          routeLine = null;
+        }
+        turnMarkers.forEach(m => map.removeLayer(m));
+        turnMarkers = [];
+
+        // ルート線
+        routeLine = L.geoJSON(route.geometry, {
+          style: {color: "blue", weight: 5}
+        }).addTo(map);
+
+        // 曲がり角マーカー + 音声案内
+        route.legs[0].steps.forEach((step, i) => {
+          const coord = step.maneuver.location;
+          const marker = L.marker([coord[1], coord[0]], {
+            icon: L.divIcon({
+              className: "turn-marker",
+              html: "➡️",
+              iconSize: [20, 20]
+            })
+          }).addTo(map);
+          turnMarkers.push(marker);
+
+          // 案内テキストを音声化
+          setTimeout(() => {
+            speak(`次は ${step.maneuver.instruction}`);
+          }, i * 3000);
+        });
+
+        // 表示を調整
+        map.fitBounds(routeLine.getBounds());
+
+        navigating = true; // ナビ開始
+        document.getElementById("info").innerText = "ナビを開始しました";
+
+      } catch (err) {
+        console.error("ルート表示エラー:", err);
+        alert("ルートを表示できません: " + err.message);
       }
     }
 
-    // ページ読み込み時に初期化
-    window.onload = initMap;
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAxxxxxx...&libraries=places"></script>
+    // 停止時
+    document.getElementById("stopBtn").addEventListener("click", () => {
+      if (routeLine) {
+        map.removeLayer(routeLine);
+        routeLine = null;
+      }
+      turnMarkers.forEach(m => map.removeLayer(m));
+      turnMarkers = [];
+      navigating = false; // ナビ終了
+      map.setBearing(0);  // 地図を戻す
+      document.getElementById("info").innerText = "ナビを停止しました";
+    });
+
+    // コンパスイベントを監視
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener("deviceorientation", handleOrientation, true);
+    }
+    // ==========================================================
+    // Part 4: UI改善・現在地固定・ポインター安定化
+    // ==========================================================
+
+    // 現在地を常に中央に固定（ナビ中のみ）
+    function keepUserCentered() {
+      if (userMarker && navigating) {
+        const pos = userMarker.getLatLng();
+        map.setView(pos, map.getZoom(), {animate: false});
+      }
+      requestAnimationFrame(keepUserCentered);
+    }
+    keepUserCentered();
+
+    // 現在地ポインター（進行方向を示す三角形）
+    const pointerIcon = L.divIcon({
+      className: "pointer-icon",
+      html: "▲",
+      iconSize: [30, 30]
+    });
+    let pointerMarker = null;
+
+    // 現在地更新時にポインターも更新
+    navigator.geolocation.watchPosition((pos) => {
+      const latlng = [pos.coords.latitude, pos.coords.longitude];
+
+      if (!userMarker) {
+        userMarker = L.marker(latlng, {icon: pointerIcon}).addTo(map);
+      } else {
+        userMarker.setLatLng(latlng);
+      }
+
+      if (!pointerMarker) {
+        pointerMarker = userMarker;
+      }
+
+      // 方角に応じてポインターを回転
+      if (compassHeading && pointerMarker._icon) {
+        pointerMarker._icon.style.transform =
+          `rotate(${compassHeading}deg) translate(-50%, -50%)`;
+      }
+
+    }, (err) => {
+      console.error("位置情報エラー:", err);
+    }, {enableHighAccuracy: true});
+
+    // UI改善（小さくして邪魔にならないように）
+    const style = document.createElement("style");
+    style.innerHTML = `
+      #controls {
+        font-size: 14px;
+        padding: 8px;
+      }
+      #controls input {
+        width: 160px;
+        font-size: 14px;
+      }
+      #controls button {
+        font-size: 14px;
+        padding: 4px 6px;
+      }
+      #info {
+        font-size: 12px;
+        padding: 4px;
+        background: rgba(0,0,0,0.5);
+        color: white;
+        border-radius: 6px;
+        max-width: 200px;
+      }
+      .turn-marker {
+        font-size: 18px;
+      }
+      .pointer-icon {
+        font-size: 30px;
+        color: red;
+        text-shadow: 0 0 2px white;
+      }
+    `;
+    document.head.appendChild(style);
+
+    // デバッグ用ログ
+    setInterval(() => {
+      if (userMarker) {
+        console.log("現在地:", userMarker.getLatLng(),
+                    "方角:", compassHeading,
+                    "ナビ中:", navigating);
+      }
+    }, 5000);
+
   </script>
 </body>
 </html>
