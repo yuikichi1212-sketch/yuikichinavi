@@ -297,6 +297,7 @@
 
     // ページ読み込み時に初期化
     window.onload = initMap;
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAxxxxxx...&libraries=places"></script>
   </script>
 </body>
 </html>
