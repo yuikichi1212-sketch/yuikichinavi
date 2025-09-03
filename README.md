@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>ゆいきちナビ — 名古屋 完全統合版（徒歩＋地下鉄＋ナビ）</title>
-
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <style>
     :root{--accent:#1e90ff;--bg:#f7f9fc;--ink:#111;--card:#fff;--muted:#6b7280;--ok:#2ecc71;--warn:#ff9800;--danger:#e53935;--walk:#1e90ff;--higashiyama:#f1c40f;--meijo:#8e44ad;--meiko:#e67e22;--tsurumai:#00bcd4;--sakura:#e74c3c;--kamiiida:#795548}
@@ -119,7 +118,7 @@
 
   // ------------------ マーカー ------------------
   function ensureCurMarker(lat,lon){ const html='<div class="marker-heading"></div>'; if(!S.curMarker){ S.curMarker=L.marker([lat,lon],{icon:L.divIcon({html,className:'',iconSize:[22,22]}),title:'現在地'}).addTo(map);} S.curMarker.setLatLng([lat,lon]); }
-  function rotateMarkerScreen(deg){ try{ const el=S.curMarker && S.curMarker.getElement() && S.curMarker.getElement().querySelector('.marker-heading'); if(el){ el.style.transform=`rotate(${deg}deg)`;} }catch(e){}
+  function rotateMarkerScreen(deg){ try{ const el=S.curMarker && S.curMarker.getElement() && S.curMarker.getElement().querySelector('.marker-heading'); if(el){ el.style.transform=`rotate(${deg}deg)`;} }catch(e){} }
 
   // ------------------ 音声 ------------------
   function speakJa(t){ if(!window.speechSynthesis) return; try{ const u=new SpeechSynthesisUtterance(t); u.lang='ja-JP'; window.speechSynthesis.cancel(); window.speechSynthesis.speak(u);}catch(e){} }
@@ -157,8 +156,13 @@
   // ------------------ 描画 ------------------
   function clearAll(){ for(const k in S.layers){ if(S.layers[k]){ try{ map.removeLayer(S.layers[k]); }catch(e){} S.layers[k]=null; } } if(S.curMarker){ try{ map.removeLayer(S.curMarker); }catch(e){} S.curMarker=null; } }
   function drawWalk(coords,key){ const line=L.polyline(coords,{color:getComputedStyle(document.documentElement).getPropertyValue('--walk').trim()||'#1e90ff',weight:6,opacity:.9}); line.addTo(map); S.layers[key]=line; return line; }
-  async function drawSubway(segments){ const pls=[]; for(const seg of segments){ const color=getComputedStyle(document.documentElement).getPropertyValue('--meijo').trim(); // default
+  async function drawSubway(segments){ const pls=[]; for(const seg of segments){ let color=getComputedStyle(document.documentElement).getPropertyValue('--meijo').trim(); // default
       if(seg.line==='東山線') color=getComputedStyle(document.documentElement).getPropertyValue('--higashiyama').trim();
+      if(seg.line==='名城線') color=getComputedStyle(document.documentElement).getPropertyValue('--meijo').trim();
+      if(seg.line==='名港線') color=getComputedStyle(document.documentElement).getPropertyValue('--meiko').trim();
+      if(seg.line==='鶴舞線') color=getComputedStyle(document.documentElement).getPropertyValue('--tsurumai').trim();
+      if(seg.line==='桜通線') color=getComputedStyle(document.documentElement).getPropertyValue('--sakura').trim();
+      if(seg.line==='上飯田線') color=getComputedStyle(document.documentElement).getPropertyValue('--kamiiida').trim();
       const pts=[]; for(const name of seg.stops){ const pt=S.stationNodes.get(name); if(pt) pts.push([pt.lat,pt.lng]); }
       if(pts.length>=2){ const pl=L.polyline(pts,{color:color||'#6c5ce7',weight:6,opacity:.95}); pl.addTo(map); pls.push(pl); }
   }
@@ -242,6 +246,8 @@
   function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
 
   // ------------------ UI wiring ------------------
+  function getMode(){ const el=document.querySelector('.mode-btn.active'); return el? el.dataset.mode : 'transit'; }
+
   E.search.addEventListener('click', async ()=>{ const mode=getMode(); S.currentMode=mode; if(mode==='transit'){ await performTransitSearch(); } else { // existing OSRM route (driving/foot/bike)
       setStatus('外部ルート検索（OSRM）'); try{ const from=S.currentPos || await getCurrentOnce(); const to = await geocode(E.to.value); const profile = mode==='driving'?'driving':'foot'; const url=`https://router.project-osrm.org/route/v1/${profile}/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson&steps=true&alternatives=true`; const res=await fetch(url); const j=await res.json(); if(j.code==='Ok' && j.routes && j.routes.length){ const r=j.routes[0]; clearAll(); const coords=r.geometry.coordinates.map(c=>[c[1],c[0]]); drawWalk(coords,'walk1'); map.fitBounds(L.latLngBounds(coords)); S.currentRouteSteps = (r.legs[0].steps||[]).map(s=>({type:'walk',text:stripHtml(s.maneuver && s.maneuver.instruction? s.maneuver.instruction: s.name), loc: s.maneuver && s.maneuver.location? {lat:s.maneuver.location[1],lng:s.maneuver.location[0]}:null, dist:s.distance})); renderRouteSteps(); setStatus('ルート描画完了'); } else setStatus('ルート取得失敗',true); } });
 
