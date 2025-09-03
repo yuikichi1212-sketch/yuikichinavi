@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>ゆいきちナビ — 超超完全版</title>
+  <title>ゆいきちナビ — 超超完全版（ALL-IN, Center-Lock）</title>
 
   <!-- Leaflet CSS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -206,7 +206,8 @@
         <span style="flex:1"></span>
         <button id="start-nav" class="btn">ナビ開始</button>
         <button id="stop-nav" class="btn" disabled>停止</button>
-        <label class="muted"><input type="checkbox" id="chk-follow" checked> 追尾</label>
+        <label class="muted"><input type="checkbox" id="chk-follow" checked> 追尾（中央固定）</label>
+        <label class="muted"><input type="checkbox" id="chk-centerlock" checked> センターロック</label>
         <label class="muted"><input type="checkbox" id="chk-rotate" checked> コンパス回転</label>
         <button id="toggle-sidebar" class="btn" title="右パネルの表示/非表示">パネル切替</button>
       </div>
@@ -255,13 +256,14 @@
 
   <script>
   // =====================================================================
-  // ゆいきちナビ — 超超完全版（省略なしフルコード）
+  // ゆいきちナビ — 超超完全版（ALL-IN + Center-Lock 強化）
+  // ・「現在地マークは常に画面中央」を最優先（追尾ON & センターロックONで確実化）
   // ・ナビ中のみ地図回転（スムーズ）
-  // ・現在地は常にど真ん中（look-aheadはデフォルトOFF）
   // ・次の案内の音声読み上げ
   // ・曲がり点マーカーは非表示（設定でON可）
   // ・上部UIは地図の外 / 右パネル / 下部ボトムシート
   // ・コンパス針＆現在地矢印はスムーズ
+  // ・キー不要のOSRMで 車/徒歩/自転車 の経路検索・代替・ターンバイターン対応
   // =====================================================================
 
   // 再初期化ガード
@@ -276,7 +278,7 @@
       // 設定（必要ならここだけ変更）
       // =============================
       const CFG = {
-        SHOW_TURN_MARKERS: false,      // 変な青点が嫌なら false（要望に合わせデフォルトfalse）
+        SHOW_TURN_MARKERS: false,      // 変な青点が嫌なら false（デフォルトfalse）
         SPEAK_NEXT_AT_METERS: 60,      // 次の案内を読む距離閾値
         SPEED_KMH: { foot: 4.8, bike: 16, driving: 42 },
         TILE_KEEP_BUFFER: 6,           // 回転時のタイル余裕（茶色防止）
@@ -284,9 +286,10 @@
         ROTATE_ONLY_WHEN_NAV: true,    // ナビ中のみ地図回転
         HEADING_FLIP: false,           // 向きが逆に感じる場合 true に（端末差対策）
         SMOOTH_ALPHA: 0.10,            // 方位スムージング（0.0〜1.0 小さいほど滑らか）
-        FOLLOW_MIN_ZOOM: 15,           // 追尾時の最低ズーム
+        FOLLOW_MIN_ZOOM: 16,           // 追尾時の最低ズーム（中央固定を強化）
         FOLLOW_MAX_ZOOM: 17,
-        LOOK_AHEAD_PX: 0,              // 先読みオフセット（0=使わない）。例: 60 で画面上方へ寄せる
+        LOOK_AHEAD_PX: 0,              // 先読みオフセット（0=使わない）→ 常にど真ん中にするため0
+        CENTER_LOCK: true,             // ★ 中心ロック（ユーザー操作で動いても次更新で中央へ戻す）
       };
 
       // =============================
@@ -308,6 +311,7 @@
         nav: false,
         watchId: null,
         follow: true,
+        centerLock: CFG.CENTER_LOCK, // ★ 追加
         rotate: true, // UIチェックボックス
         useDummy: false,
 
@@ -328,6 +332,12 @@
 
         // Prev pos
         _prev: null,
+
+        // UI temp
+        mapClickMode: null,
+
+        // last manual interaction timestamp (センターロック復帰の参考)
+        lastUserInteractTs: 0,
       };
 
       // =============================
@@ -340,7 +350,7 @@
         startNav: qs('#start-nav'), stopNav: qs('#stop-nav'),
         hudTotalDist: qs('#hud-total-dist'), hudTotalTime: qs('#hud-total-time'),
         hudRemDist: qs('#hud-rem-dist'), hudRemTime: qs('#hud-rem-time'), hudNext: qs('#hud-next'),
-        chkFollow: qs('#chk-follow'), chkRotate: qs('#chk-rotate'),
+        chkFollow: qs('#chk-follow'), chkRotate: qs('#chk-rotate'), chkCenterLock: qs('#chk-centerlock'),
         compass: qs('#compass-needle'), sidebar: qs('#sidebar'),
         stepsSheet: qs('#route-steps'), stepsBody: qs('#route-steps-body'),
         toggleMore: qs('#toggle-more'), more: qs('#more'), toggleSidebar: qs('#toggle-sidebar'),
@@ -420,10 +430,9 @@
       // =============================
       const map = L.map('map', {
         center:[35.681236,139.767125],
-        zoom:5,
+        zoom:16, // ★ 中央固定を前提に初期から近め
         zoomControl:true,
       });
-      // keepBuffer を厚めにして、回転時の茶色（空白）を極力抑制
       const base = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
         maxZoom:19,
         attribution:'© OpenStreetMap contributors',
@@ -433,7 +442,7 @@
       }).addTo(map);
 
       S.map = map;
-      S.mapPane = map.getPane('mapPane'); // .leaflet-map-pane DOM要素
+      S.mapPane = map.getPane('mapPane');
 
       // =============================
       // Markers
@@ -449,7 +458,6 @@
         S.curMarker.setLatLng([lat,lon]);
       }
       function rotateMarkerScreen(deg){
-        // 現在地マーカーの内部DIVを回転
         try{
           const el = S.curMarker && S.curMarker.getElement() && S.curMarker.getElement().querySelector('.marker-heading');
           if(el){ el.style.transform = `rotate(${deg}deg)`; }
@@ -460,7 +468,6 @@
       // Map Rotation (CSS transform on mapPane)
       // =============================
       function applyMapRotation(deg){
-        // スムーズに回すため、scale 少しかけて角隠し
         const scale = (S.rotationActive ? CFG.MAP_ROTATE_SCALE : 1);
         S.mapPane.style.transform = `rotate(${deg}deg) scale(${scale})`;
       }
@@ -471,7 +478,6 @@
         if(!active){
           S.targetMapRotation = 0;
         }
-        // レイアウトを安定させる
         requestAnimationFrame(()=> map.invalidateSize({debounceMoveend:true}));
       }
 
@@ -542,7 +548,6 @@
           line.bindTooltip(`候補 ${i+1}｜${(r.distance/1000).toFixed(2)} km｜${formatDuration(etaSeconds(r.distance, getMode()))}`);
           S.routeLayers.push(line);
 
-          // （要望）変な点＝ターンマーカーはデフォルト非表示
           if(CFG.SHOW_TURN_MARKERS){
             const steps=(r.legs&&r.legs[0]&&r.legs[0].steps)? r.legs[0].steps : [];
             const every=Math.max(1,Math.floor(steps.length/40));
@@ -554,7 +559,6 @@
               const marker=L.circleMarker([lat,lon],{radius:6,weight:2,color:'#1e90ff',fillColor:'#1e90ff',fillOpacity:.9});
               marker.bindTooltip(jpInstruction(s),{permanent:false,direction:'top',offset:[0,-6]});
               marker.addTo(map);
-              // → SHOW_TURN_MARKERS=false なら作らない
             });
           }
 
@@ -585,6 +589,7 @@
         const steps = r.legs[0].steps;
         renderTurns(steps);
 
+        // ★ fitBounds は「候補確認用」。追尾（中央固定）時は onNavPos で即座に中央復帰。
         const coords = r.geometry.coordinates.map(c=>[c[1],c[0]]);
         map.fitBounds(L.latLngBounds(coords),{padding:[50,50]});
 
@@ -698,30 +703,38 @@
       }
       function varOk(){ return '#2ecc71' }
 
+      // ★★★ 現在地を常に画面の真ん中に保つコア処理 ★★★
+      function recenterIfNeeded(lat,lon){
+        // 追尾ON → 常に中央へ。センターロックON → ユーザー操作があっても次更新で中央へ。
+        if(S.follow){
+          const z = clamp(map.getZoom(), CFG.FOLLOW_MIN_ZOOM, CFG.FOLLOW_MAX_ZOOM);
+          map.setView([lat,lon], z, { animate:false }); // ← アニメ無しで中央固定（ぶれない）
+          if(CFG.LOOK_AHEAD_PX){
+            const rad = (S.headingView) * Math.PI/180;
+            const dx = 0;
+            const dy = -CFG.LOOK_AHEAD_PX;
+            map.panBy([dx, dy], { animate:false });
+          }
+        } else if (S.centerLock) {
+          // 追尾OFFでも、ロックONなら簡易的に戻す（ONにしている限り次更新で中央復帰）
+          const z = clamp(map.getZoom(), CFG.FOLLOW_MIN_ZOOM, CFG.FOLLOW_MAX_ZOOM);
+          map.setView([lat,lon], z, { animate:false });
+        }
+      }
+
       function onNavPos(pos){
         const lat=pos.coords.latitude, lon=pos.coords.longitude;
 
-        // ---- Headingの決定（センサー最新があればそれ、無ければ移動方向）
+        // ---- Headingの決定
         let headingDeg = getStableHeading(lat, lon);
         ensureCurMarker(lat,lon);
 
-        // ---- 追尾（現在地は常に中央、look-aheadがあれば前方に寄せる）
-        if(S.follow){
-          const z = clamp(map.getZoom(), CFG.FOLLOW_MIN_ZOOM, CFG.FOLLOW_MAX_ZOOM);
-          map.setView([lat,lon], z, { animate:false }); // 中央固定（jitter防止でアニメ無）
-          if(CFG.LOOK_AHEAD_PX){
-            // 向いている方向へ画面上でオフセット（上方向へ）
-            const rad = (headingDeg-0) * Math.PI/180;
-            const dx = 0; // 横方向なし（必要なら Math.sin(rad)*px ）
-            const dy = -CFG.LOOK_AHEAD_PX; // 画面上へ
-            map.panBy([dx, dy], { animate:false });
-          }
-        }
+        // ---- ★ 常に中央へ（追尾/ロックの意志を尊重）
+        recenterIfNeeded(lat, lon);
 
         // ---- 地図の回転（ナビ中のみ & チェックON）
         if(S.rotate && (!CFG.ROTATE_ONLY_WHEN_NAV || S.nav)){
           setRotationActive(true);
-          // 進行方向が画面の上になるよう、地図を -heading で回す
           S.targetMapRotation = -headingDeg;
         } else {
           setRotationActive(false);
@@ -730,16 +743,19 @@
 
         // ---- マーカーの向き
         if(S.rotationActive){
-          // 地図を -heading 回しているので、マーカーは常に上（0deg）を向かせる
           rotateMarkerScreen(0);
         }else{
-          // 地図を回さない場合は、マーカー自身を heading に合わせて回す
           rotateMarkerScreen(headingDeg);
         }
 
         // ---- 次の案内 / 進捗 / 残り
+        updateGuidanceAndProgress(lat, lon);
+      }
+
+      function updateGuidanceAndProgress(lat, lon){
         const route=S.routes[S.selected];
         if(!route) return;
+
         const line=turf.lineString(route.geometry.coordinates);
         const pt=turf.point([lon,lat]);
         const snapped=turf.nearestPointOnLine(line, pt, {units:'meters'});
@@ -783,7 +799,7 @@
               if(rs&&rs.length){
                 drawRoutes(rs);
                 setStatus('自動リルート完了');
-                if(S.follow) map.setView([lat,lon], clamp(map.getZoom(), CFG.FOLLOW_MIN_ZOOM, CFG.FOLLOW_MAX_ZOOM), {animate:false});
+                recenterIfNeeded(lat, lon);
               } else {
                 setStatus('リルート失敗',true);
               }
@@ -794,7 +810,6 @@
 
       function getStableHeading(lat, lon){
         const now = Date.now();
-        // 新しいセンサー値があるならそれ、なければ移動方向
         let h = S.headingView;
         const fresh = (now - S.lastHeadingTs) < 2500;
         if(!fresh && S._prev){
@@ -812,20 +827,15 @@
       // Orientation (compass) — smoothing
       // =============================
       function updateHeadingFromSensor(deg){
-        // 方向反転が必要な場合に対応
         let d = norm360(deg);
         if(CFG.HEADING_FLIP) d = norm360(360 - d);
 
-        // スムージング
-        // (角度の折り返しに対応した最短差でフィルタ)
         S.headingView = easeAngleToward(S.headingView, d, CFG.SMOOTH_ALPHA);
         S.headingRaw = d;
         S.lastHeadingTs = Date.now();
 
-        // コンパス針（地図が回る時は針も上を指しがちなので、視覚的フィードバック用にほぼ同じ角度を回す）
         try{ E.compass.style.transform = `rotate(${S.headingView}deg)`; }catch(e){}
 
-        // 地図回転目標も更新
         if(S.rotationActive || (!CFG.ROTATE_ONLY_WHEN_NAV && S.rotate)){
           S.targetMapRotation = -S.headingView;
         }
@@ -838,7 +848,6 @@
           return a||0;
         }
         function fromAlpha(alpha){
-          // alpha: z軸回転（0=北）。デバイス向き・スクリーン角度補正
           const base = norm360(360 - alpha + screenAngle());
           updateHeadingFromSensor(base);
         }
@@ -877,6 +886,12 @@
         ensureCurMarker(DUMMY.lat,DUMMY.lon);
         map.setView([DUMMY.lat,DUMMY.lon],16, {animate:false});
         setStatus('ダミー位置を使用中');
+        // ダミーで動かす（センター固定の効き目を確認しやすい）
+        setInterval(()=>{
+          const nlat=DUMMY.lat + (Math.random()-0.5)*0.0005;
+          const nlon=DUMMY.lon + (Math.random()-0.5)*0.0005;
+          onNavPos({coords:{latitude:nlat, longitude:nlon}});
+        }, 1500);
       }
 
       // =============================
@@ -938,11 +953,19 @@
         }
       });
 
+      // 手動パン・ズームを検出（センターロックのフィードバックに利用）
+      ['movestart','zoomstart','dragstart'].forEach(ev=>{
+        map.on(ev, ()=>{ S.lastUserInteractTs = Date.now(); });
+      });
+
       E.search.addEventListener('click', async ()=>{
         try{
           setStatus('出発地を解決中...');
           const f=await resolveFromInput(); S.from=f;
           ensureCurMarker(f.lat,f.lon);
+          // ★ 検索時点でも中央固定
+          recenterIfNeeded(f.lat, f.lon);
+
           setStatus('目的地を解決中...');
           const t=await resolveToInput(); S.to=t;
           setStatus('ルート検索中...');
@@ -957,6 +980,7 @@
       E.stopNav.addEventListener('click', stopNavigation);
 
       E.chkFollow.addEventListener('change',()=>{ S.follow=E.chkFollow.checked; });
+      E.chkCenterLock.addEventListener('change',()=>{ S.centerLock=E.chkCenterLock.checked; });
       E.chkRotate.addEventListener('change',()=>{
         S.rotate=E.chkRotate.checked;
         if(!S.rotate){
@@ -994,7 +1018,7 @@
         const cur = S.curMapRotation;
         const tgt = S.targetMapRotation;
         if(Math.abs(shortestAngleDiff(cur, tgt)) > 0.1){
-          S.curMapRotation = easeAngleToward(cur, tgt, 0.18); // UI回転の追従速度
+          S.curMapRotation = easeAngleToward(cur, tgt, 0.18);
           applyMapRotation(S.curMapRotation);
         } else if(cur !== tgt){
           S.curMapRotation = tgt;
@@ -1021,6 +1045,11 @@
       // Export (debug)
       // =============================
       window.__YK__ = { state:S, config:CFG, map };
+
+      // =============================
+      // 初期：ダミーで試したい場合はここをON
+      // =============================
+      // applyDummy();
 
     })();
   }
